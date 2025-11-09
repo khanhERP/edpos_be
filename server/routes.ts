@@ -20,8 +20,6 @@ import {
   insertPurchaseReceiptItemSchema,
   insertPurchaseReceiptDocumentSchema,
   insertPurchaseOrderItemSchema,
-  insertPriceListSchema,
-  insertPriceListItemSchema,
   attendanceRecords,
   products,
   inventoryTransactions,
@@ -29,7 +27,6 @@ import {
   invoices,
   invoiceItems,
   customers,
-  priceListItems,
   printerConfigs,
   storeSettings,
   orders,
@@ -39,13 +36,8 @@ import {
   transactionItems as transactionItemsTable,
   tables,
   employees,
-  priceLists,
-  generalSettings,
-  insertGeneralSettingSchema,
   purchaseReceiptDocuments,
-  purchaseReceiptItems,
   paymentMethods,
-  orderChangeHistory,
 } from "../shared/schema";
 import { initializeSampleData, db } from "./db";
 import { registerTenantRoutes } from "./tenant-routes";
@@ -69,16 +61,8 @@ import {
   lte,
   ilike,
   ne,
-  inArray,
 } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import bcrypt from "bcryptjs";
-import {
-  authMiddleware,
-  generateToken,
-  type AuthRequest,
-} from "./auth-middleware";
-import cookieParser from "cookie-parser";
 
 // Helper function to get payment method display name
 function getPaymentMethodName(method: string | number): string {
@@ -230,9 +214,6 @@ const generateUniqueSKU = async (tenantDb: any): Promise<string> => {
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Apply cookie parser middleware
-  app.use(cookieParser());
-
   // Register tenant management routes
   registerTenantRoutes(app);
 
@@ -241,1433 +222,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Initialize sample data
   await initializeSampleData();
-
-  // ============================================
-  // STORE SETTINGS MANAGEMENT APIs
-  // ============================================
-
-  // Get all store settings
-  app.get(
-    "/api/store-settings/list",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      // Disable cache for real-time data
-      res.set({
-        "Cache-Control": "no-store, no-cache, must-revalidate, private",
-        Pragma: "no-cache",
-        Expires: "0",
-      });
-
-      try {
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-        let userId = req.user?.userId;
-
-        let [stores] = await database
-          .select()
-          .from(storeSettings)
-          .where(eq(storeSettings.id, userId))
-          .limit(1);
-
-        if (stores.isAdmin === true) {
-          let lstStore = await database
-            .select()
-            .from(storeSettings)
-            .orderBy(asc(storeSettings.id));
-          return res.json(lstStore);
-        } else {
-          let lstStoreCode = stores.parent.split(",").map((item) => {
-            return item.trim();
-          });
-          console.log("lstStoreCode: ", lstStoreCode);
-          let lstStore = await database
-            .select()
-            .from(storeSettings)
-            .where(inArray(storeSettings.storeCode, lstStoreCode))
-            .orderBy(asc(storeSettings.id));
-          return res.json(lstStore);
-        }
-      } catch (error) {
-        console.error("❌ Error fetching store settings list:", error);
-        res.status(500).json({
-          error: "Failed to fetch store settings list",
-        });
-      }
-    },
-  );
-
-  // Get store settings with typeUser = 1 (admin stores)
-  app.get(
-    "/api/store-settings/admin-stores",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const adminStores = await database
-          .select()
-          .from(storeSettings)
-          .where(eq(storeSettings.typeUser, 1))
-          .orderBy(asc(storeSettings.id));
-
-        console.log(
-          `✅ Fetched ${adminStores.length} admin store settings (typeUser = 1)`,
-        );
-        res.json(adminStores);
-      } catch (error) {
-        console.error("❌ Error fetching admin store settings:", error);
-        res.status(500).json({
-          error: "Failed to fetch admin store settings",
-        });
-      }
-    },
-  );
-
-  // Create new store settings
-  app.post(
-    "/api/store-settings/create",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const {
-          storeName,
-          storeCode,
-          pinCode,
-          userName,
-          password,
-          ...otherSettings
-        } = req.body;
-
-        // Validate required fields based on typeUser
-        const typeUser = otherSettings.typeUser || 0;
-
-        // For typeUser = 0 (store), require storeCode
-        if (typeUser === 0) {
-          if (!storeCode || !storeCode.trim()) {
-            return res.status(400).json({
-              error: "Mã cửa hàng là bắt buộc",
-              message: "Vui lòng nhập mã cửa hàng",
-            });
-          }
-        }
-
-        // For typeUser = 1 (user account), require userName and password
-        if (typeUser === 1) {
-          if (!userName || !userName.trim()) {
-            return res.status(400).json({
-              error: "Tên đăng nhập là bắt buộc",
-              message: "Vui lòng nhập tên đăng nhập",
-            });
-          }
-
-          if (!password || !password.trim()) {
-            return res.status(400).json({
-              error: "Mật khẩu là bắt buộc",
-              message: "Vui lòng nhập mật khẩu",
-            });
-          }
-
-          // Check if userName already exists
-          const existingUserName = await database
-            .select()
-            .from(storeSettings)
-            .where(eq(storeSettings.userName, userName))
-            .limit(1);
-
-          if (existingUserName.length > 0) {
-            return res.status(409).json({
-              error: "Username already exists",
-              message: `Tên đăng nhập "${userName}" đã được sử dụng`,
-            });
-          }
-        }
-
-        // Use storeCode as pinCode if not provided
-        const finalPinCode =
-          pinCode && pinCode.trim() ? pinCode : storeCode || "";
-
-        // Check if store code already exists (only for typeUser = 0)
-        if (typeUser === 0 && storeCode) {
-          const existingStoreCode = await database
-            .select()
-            .from(storeSettings)
-            .where(eq(storeSettings.storeCode, storeCode))
-            .limit(1);
-
-          if (existingStoreCode.length > 0) {
-            return res.status(409).json({
-              error: "Store code already exists",
-              message: `Mã cửa hàng "${storeCode}" đã được sử dụng`,
-            });
-          }
-        }
-
-        // Hash password if provided
-        const hashedPassword = password;
-
-        // Create new store settings
-        const [newStore] = await database
-          .insert(storeSettings)
-          .values({
-            userName: userName || null,
-            password: hashedPassword,
-            storeName: storeName || storeCode,
-            storeCode,
-            pinCode: finalPinCode || null,
-            typeUser: typeUser,
-            isAdmin: otherSettings.isAdmin || false,
-            parent: otherSettings.parent || null,
-            priceListId: otherSettings.priceListId || null,
-            address: otherSettings.address || null,
-            phone: otherSettings.phone || null,
-            email: otherSettings.email || null,
-            taxId: otherSettings.taxId || null,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .returning();
-
-        console.log(
-          `✅ Created new store settings: ${newStore.id} (typeUser: ${typeUser})`,
-        );
-
-        // Return user data without password
-        const { password: _, ...userDataWithoutPassword } = newStore;
-        res.status(201).json(userDataWithoutPassword);
-      } catch (error) {
-        console.error("❌ Error creating store settings:", error);
-        res.status(500).json({
-          error: "Failed to create store settings",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
-
-  // Update store settings by ID
-  app.put(
-    "/api/store-settings/:id",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const storeId = parseInt(req.params.id);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { pinCode, storeCode, ...otherSettings } = req.body;
-
-        // If store code is being updated, check for duplicates
-        if (storeCode) {
-          const existingStoreCode = await database
-            .select()
-            .from(storeSettings)
-            .where(
-              and(
-                eq(storeSettings.storeCode, storeCode),
-                ne(storeSettings.id, storeId),
-              ),
-            )
-            .limit(1);
-
-          if (existingStoreCode.length > 0) {
-            return res.status(409).json({
-              error: "Store code already exists",
-              message: `Mã cửa hàng "${storeCode}" đã được sử dụng`,
-            });
-          }
-        }
-
-        const [updatedStore] = await database
-          .update(storeSettings)
-          .set({
-            ...otherSettings,
-            ...(pinCode && { pinCode }),
-            ...(storeCode && { storeCode }),
-            updatedAt: new Date(),
-          })
-          .where(eq(storeSettings.id, storeId))
-          .returning();
-
-        if (!updatedStore) {
-          return res.status(404).json({
-            error: "Store settings not found",
-          });
-        }
-
-        console.log(`✅ Updated store settings: ${storeId}`);
-        res.json(updatedStore);
-      } catch (error) {
-        console.error("❌ Error updating store settings:", error);
-        res.status(500).json({
-          error: "Failed to update store settings",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
-
-  // Delete store settings by ID
-  app.delete(
-    "/api/store-settings/:id",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const storeId = parseInt(req.params.id);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        // Check if there are any orders, transactions, or other data linked to this store
-        // (You may want to add more validation here)
-
-        await database
-          .delete(storeSettings)
-          .where(eq(storeSettings.id, storeId));
-
-        console.log(`✅ Deleted store settings: ${storeId}`);
-        res.json({ success: true });
-      } catch (error) {
-        console.error("❌ Error deleting store settings:", error);
-        res.status(500).json({
-          error: "Failed to delete store settings",
-        });
-      }
-    },
-  );
-
-  // Toggle printer status endpoint
-  app.patch(
-    "/api/printer-configs/:id/toggle-status",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const id = parseInt(req.params.id);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        console.log(`🔄 Toggling printer status for ID: ${id}`);
-
-        // Get current printer config
-        const [currentConfig] = await database
-          .select()
-          .from(printerConfigs)
-          .where(eq(printerConfigs.id, id))
-          .limit(1);
-
-        if (!currentConfig) {
-          console.error(`❌ Printer config not found: ${id}`);
-          return res.status(404).json({
-            error: "Printer config not found",
-          });
-        }
-
-        const newStatus = !currentConfig.isActive;
-        console.log(
-          `📝 Updating printer ${id} status: ${currentConfig.isActive} -> ${newStatus}`,
-        );
-
-        // Update printer status
-        const [updatedConfig] = await database
-          .update(printerConfigs)
-          .set({
-            isActive: newStatus,
-            updatedAt: new Date(),
-          })
-          .where(eq(printerConfigs.id, id))
-          .returning();
-
-        console.log(`✅ Printer status updated successfully:`, updatedConfig);
-
-        res.json(updatedConfig);
-      } catch (error) {
-        console.error("❌ Error toggling printer status:", error);
-        res.status(500).json({
-          error: "Failed to toggle printer status",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
-
-  // ============================================
-  // AUTHENTICATION APIs
-  // ============================================
-
-  // Login API
-  app.post("/api/auth/login", async (req: TenantRequest, res) => {
-    try {
-      const { userName, password } = req.body;
-
-      if (!userName || !password) {
-        return res.status(400).json({
-          success: false,
-          message: "Vui lòng nhập tên đăng nhập và mật khẩu",
-        });
-      }
-
-      const tenantDb = await getTenantDatabase(req);
-      const database = tenantDb || db;
-
-      // Tìm user trong store_settings
-      const [user] = await database
-        .select()
-        .from(storeSettings)
-        .where(eq(storeSettings.userName, userName))
-        .limit(1);
-
-      if (!user) {
-        return res.status(401).json({
-          success: false,
-          message: "Tên đăng nhập hoặc mật khẩu không đúng",
-        });
-      }
-
-      // Kiểm tra mật khẩu
-      // Nếu password chưa được hash, so sánh trực tiếp
-      let isPasswordValid = false;
-      if (user.password?.startsWith("$2")) {
-        // Password đã được hash
-        isPasswordValid = await bcrypt.compare(password, user.password);
-      } else {
-        // Password chưa hash (legacy)
-        isPasswordValid = password === user.password;
-      }
-
-      if (!isPasswordValid) {
-        return res.status(401).json({
-          success: false,
-          message: "Tên đăng nhập hoặc mật khẩu không đúng",
-        });
-      }
-
-      // Tạo JWT token
-      const token = generateToken({
-        userId: user.id,
-        userName: user.userName!,
-        storeCode: user.storeCode || "",
-        isAdmin: user.isAdmin || false,
-        typeUser: user.typeUser || 0,
-      });
-
-      // Set HTTP-only cookie
-      res.cookie("authToken", token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
-        maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      });
-
-      console.log(`✅ User ${userName} logged in successfully`);
-
-      res.json({
-        success: true,
-        message: "Đăng nhập thành công",
-        data: {
-          token,
-          user: {
-            id: user.id,
-            userName: user.userName,
-            storeCode: user.storeCode,
-            storeName: user.storeName,
-            isAdmin: user.isAdmin,
-            typeUser: user.typeUser,
-          },
-        },
-      });
-    } catch (error) {
-      console.error("❌ Login error:", error);
-      res.status(500).json({
-        success: false,
-        message: "Lỗi đăng nhập",
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-
-  // Register API (Tạo tài khoản mới)
-  app.post("/api/auth/register", async (req: TenantRequest, res) => {
-    try {
-      const { userName, password, storeCode, storeName, isAdmin, typeUser } =
-        req.body;
-
-      if (!userName || !password || !storeCode) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Vui lòng nhập đầy đủ thông tin: userName, password, storeCode",
-        });
-      }
-
-      const tenantDb = await getTenantDatabase(req);
-      const database = tenantDb || db;
-
-      // Kiểm tra username đã tồn tại
-      const [existingUser] = await database
-        .select()
-        .from(storeSettings)
-        .where(eq(storeSettings.userName, userName))
-        .limit(1);
-
-      if (existingUser) {
-        return res.status(409).json({
-          success: false,
-          message: "Tên đăng nhập đã tồn tại",
-        });
-      }
-
-      // Tạo user mới
-      const [newUser] = await database
-        .insert(storeSettings)
-        .values({
-          userName,
-          password: password,
-          storeCode,
-          storeName: storeName || "Cửa hàng mới",
-          isAdmin: isAdmin || false,
-          typeUser: typeUser || 0,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returning();
-
-      console.log(`✅ User ${userName} registered successfully`);
-
-      res.status(201).json({
-        success: true,
-        message: "Đăng ký thành công",
-        data: {
-          id: newUser.id,
-          userName: newUser.userName,
-          storeCode: newUser.storeCode,
-          storeName: newUser.storeName,
-        },
-      });
-    } catch (error) {
-      console.error("❌ Register error:", error);
-      res.status(500).json({
-        success: false,
-        message: "Lỗi đăng ký",
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-
-  // Verify Token API
-  app.get("/api/auth/verify", authMiddleware, async (req: AuthRequest, res) => {
-    try {
-      res.json({
-        success: true,
-        message: "Token hợp lệ",
-        data: req.user,
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Lỗi xác thực token",
-      });
-    }
-  });
-
-  // Logout API
-  app.post("/api/auth/logout", async (req: TenantRequest, res) => {
-    try {
-      // Clear the auth cookie
-      res.clearCookie("authToken", {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
-      });
-
-      res.json({
-        success: true,
-        message: "Đăng xuất thành công",
-      });
-    } catch (error) {
-      console.error("❌ Logout error:", error);
-      res.status(500).json({
-        success: false,
-        message: "Lỗi đăng xuất",
-      });
-    }
-  });
-
-  // ============================================
-  // GENERAL SETTINGS APIs
-  // ============================================
-
-  // Get all general settings
-  app.get(
-    "/api/general-settings",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { generalSettings } = await import("../shared/schema");
-
-        const settings = await database
-          .select()
-          .from(generalSettings)
-          .orderBy(desc(generalSettings.createdAt));
-
-        console.log(`✅ Fetched ${settings.length} general settings`);
-        res.json(settings);
-      } catch (error) {
-        console.error("❌ Error fetching general settings:", error);
-        res.status(500).json({
-          error: "Failed to fetch general settings",
-        });
-      }
-    },
-  );
-
-  // Get general setting by code (specific route first)
-  app.get(
-    "/api/general-settings/by-code/:code",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const code = req.params.code;
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { generalSettings } = await import("../shared/schema");
-
-        const [setting] = await database
-          .select()
-          .from(generalSettings)
-          .where(eq(generalSettings.settingCode, code))
-          .limit(1);
-
-        if (!setting) {
-          return res.status(404).json({
-            error: "General setting not found",
-          });
-        }
-
-        res.json(setting);
-      } catch (error) {
-        console.error("❌ Error fetching general setting by code:", error);
-        res.status(500).json({
-          error: "Failed to fetch general setting by code",
-        });
-      }
-    },
-  );
-
-  // Get general setting by ID
-  app.get(
-    "/api/general-settings/:id",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const id = parseInt(req.params.id);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { generalSettings } = await import("../shared/schema");
-
-        const [setting] = await database
-          .select()
-          .from(generalSettings)
-          .where(eq(generalSettings.id, id))
-          .limit(1);
-
-        if (!setting) {
-          return res.status(404).json({
-            error: "General setting not found",
-          });
-        }
-
-        res.json(setting);
-      } catch (error) {
-        console.error("❌ Error fetching general setting:", error);
-        res.status(500).json({
-          error: "Failed to fetch general setting",
-        });
-      }
-    },
-  );
-
-  // Create general setting
-  app.post(
-    "/api/general-settings",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { generalSettings, insertGeneralSettingSchema } = await import(
-          "../shared/schema"
-        );
-
-        console.log(`📝 Creating general setting with data:`, req.body);
-
-        // Validate data
-        const validatedData = insertGeneralSettingSchema.parse(req.body);
-
-        // Check if setting code already exists
-        const [existingSetting] = await database
-          .select()
-          .from(generalSettings)
-          .where(eq(generalSettings.settingCode, validatedData.settingCode))
-          .limit(1);
-
-        if (existingSetting) {
-          return res.status(409).json({
-            error: "Setting code already exists",
-            message: `Mã thiết lập "${validatedData.settingCode}" đã tồn tại`,
-          });
-        }
-
-        // Create new setting
-        const [newSetting] = await database
-          .insert(generalSettings)
-          .values({
-            ...validatedData,
-            storeCode: req.user?.storeCode,
-          })
-          .returning();
-
-        console.log(`✅ Created general setting: ${newSetting.id}`);
-        res.status(201).json(newSetting);
-      } catch (error) {
-        console.error("❌ Error creating general setting:", error);
-        if (error instanceof z.ZodError) {
-          return res.status(400).json({
-            message: "Invalid data",
-            errors: error.errors,
-          });
-        }
-        res.status(500).json({
-          error: "Failed to create general setting",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
-
-  // Update general setting
-  app.put(
-    "/api/general-settings/:id",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const id = parseInt(req.params.id);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        console.log(`📝 Updating general setting ${id} with data:`, req.body);
-
-        // Validate data (partial update)
-        const validatedData = insertGeneralSettingSchema
-          .partial()
-          .parse(req.body);
-
-        // If setting code is being updated, check for duplicates
-        if (validatedData.settingCode) {
-          const [existingSetting] = await database
-            .select()
-            .from(generalSettings)
-            .where(
-              and(
-                eq(generalSettings.settingCode, validatedData.settingCode),
-                ne(generalSettings.id, id),
-              ),
-            )
-            .limit(1);
-
-          if (existingSetting) {
-            return res.status(409).json({
-              error: "Setting code already exists",
-              message: `Mã thiết lập "${validatedData.settingCode}" đã tồn tại`,
-            });
-          }
-        }
-
-        // Update setting
-        const [updatedSetting] = await database
-          .update(generalSettings)
-          .set({
-            ...validatedData,
-            updatedAt: new Date(),
-          })
-          .where(eq(generalSettings.id, id))
-          .returning();
-
-        if (!updatedSetting) {
-          return res.status(404).json({
-            error: "General setting not found",
-          });
-        }
-
-        console.log(`✅ Updated general setting: ${id}`);
-        res.json(updatedSetting);
-      } catch (error) {
-        console.error("❌ Error updating general setting:", error);
-        if (error instanceof z.ZodError) {
-          return res.status(400).json({
-            message: "Invalid data",
-            errors: error.errors,
-          });
-        }
-        res.status(500).json({
-          error: "Failed to update general setting",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
-
-  // Delete general setting
-  app.delete(
-    "/api/general-settings/:id",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const id = parseInt(req.params.id);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        await database
-          .delete(generalSettings)
-          .where(eq(generalSettings.id, id));
-
-        console.log(`✅ Deleted general setting: ${id}`);
-        res.json({ success: true });
-      } catch (error) {
-        console.error("❌ Error deleting general setting:", error);
-        res.status(500).json({
-          error: "Failed to delete general setting",
-        });
-      }
-    },
-  );
-
-  // ============================================
-  // PRICE LISTS APIs
-  // ============================================
-
-  // Get all price lists
-  app.get("/api/price-lists", authMiddleware, async (req: AuthRequest, res) => {
-    try {
-      const tenantDb = await getTenantDatabase(req);
-      const database = tenantDb || db;
-
-      const lists = await database
-        .select()
-        .from(priceLists)
-        .orderBy(desc(priceLists.createdAt));
-
-      console.log(`✅ Fetched ${lists.length} price lists`);
-      res.json(lists);
-    } catch (error) {
-      console.error("❌ Error fetching price lists:", error);
-      res.status(500).json({
-        error: "Failed to fetch price lists",
-      });
-    }
-  });
-
-  // Get next price list code - MUST BE BEFORE :id route
-  app.get(
-    "/api/price-lists/next-code",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        console.log("🔍 API: Getting next price list code with BG prefix");
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        // Default starting sequence
-        let nextSequence = 1;
-
-        try {
-          // Query for all price list codes with BG prefix
-          const allCodes = await database
-            .select({ code: priceLists.code })
-            .from(priceLists)
-            .where(like(priceLists.code, "BG-%"))
-            .orderBy(desc(priceLists.code));
-
-          console.log("📋 Found price list codes:", allCodes.length);
-
-          if (allCodes.length > 0) {
-            // Extract all sequence numbers and find the max
-            const sequences = allCodes
-              .map((row) => {
-                const match = row.code?.match(/^BG-(\d+)$/);
-                return match ? parseInt(match[1], 10) : 0;
-              })
-              .filter((num) => !isNaN(num) && num > 0);
-
-            if (sequences.length > 0) {
-              const maxSequence = Math.max(...sequences);
-              nextSequence = maxSequence + 1;
-              console.log(
-                "📈 Max sequence:",
-                maxSequence,
-                "→ Next:",
-                nextSequence,
-              );
-            }
-          }
-        } catch (queryError) {
-          console.error(
-            "⚠️ Error querying price lists, using default sequence:",
-            queryError,
-          );
-        }
-
-        // Final safety check
-        if (!Number.isInteger(nextSequence) || nextSequence < 1) {
-          console.warn("⚠️ Invalid nextSequence, resetting to 1");
-          nextSequence = 1;
-        }
-
-        // Format: BG-0000001 (7 digits)
-        const formattedSequence = nextSequence.toString().padStart(7, "0");
-        const nextCode = `BG-${formattedSequence}`;
-
-        console.log("✅ API: Generated next price list code:", nextCode);
-        res.json({ code: nextCode });
-      } catch (error) {
-        console.error("❌ API: Failed to generate price list code:", error);
-        // Return default code on error
-        res.json({ code: "BG-0000001" });
-      }
-    },
-  );
-
-  // Get price list by ID with items
-  app.get(
-    "/api/price-lists/:id",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const { id } = req.params;
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        let [priceList] = await database
-          .select()
-          .from(priceLists)
-          .where(eq(priceLists.id, id))
-          .limit(1);
-
-        if (!priceList) {
-          return res.status(404).json({
-            error: "Price list not found",
-          });
-        }
-
-        const items = await database
-          .select({
-            id: priceListItems.id,
-            priceListId: priceListItems.priceListId,
-            productId: priceListItems.productId,
-            price: priceListItems.price,
-            updatedAt: priceListItems.updatedAt,
-            createdAt: priceListItems.createdAt,
-            productName: products.name,
-            productSku: products.sku,
-            categoryId: products.categoryId,
-            categoryName: categories.name,
-          })
-          .from(priceListItems)
-          .leftJoin(products, eq(priceListItems.productId, products.id))
-          .leftJoin(categories, eq(products.categoryId, categories.id))
-          .where(eq(priceListItems.priceListId, id));
-
-        return res.json({
-          ...priceList,
-          items,
-        });
-      } catch (error) {
-        console.error("❌ Error fetching price list:", error);
-        res.status(500).json({
-          error: "Failed to fetch price list",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
-
-  // Create price list
-  app.post(
-    "/api/price-lists",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { items, storeCodes, ...priceListData } = req.body;
-
-        // Auto-generate code if not provided
-        if (!priceListData.code || priceListData.code.trim() === "") {
-          console.log("🔢 No price list code provided, generating one");
-
-          // Query for all price list codes with BG prefix - use like instead of ilike
-          const allCodes = await database
-            .select({ code: priceLists.code })
-            .from(priceLists)
-            .where(like(priceLists.code, "BG-%"))
-            .orderBy(desc(priceLists.code));
-
-          let nextSequence = 1;
-
-          if (allCodes.length > 0) {
-            // Extract all sequence numbers and find the max
-            const sequences = allCodes
-              .map((row) => {
-                const match = row.code.match(/^BG-(\d+)$/);
-                return match ? parseInt(match[1], 10) : 0;
-              })
-              .filter((num) => !isNaN(num) && num > 0);
-
-            if (sequences.length > 0) {
-              const maxSequence = Math.max(...sequences);
-              nextSequence = maxSequence + 1;
-            }
-          }
-
-          // Format: BG-0000001 (7 digits)
-          const formattedSequence = nextSequence.toString().padStart(7, "0");
-          priceListData.code = `BG-${formattedSequence}`;
-          console.log("🔢 Generated price list code:", priceListData.code);
-        }
-
-        // Validate price list data
-        const validatedPriceList = insertPriceListSchema.parse({
-          ...priceListData,
-          storeCode: priceListData.storeCode || null,
-        });
-
-        // If this is set as default, unset other defaults
-        if (validatedPriceList.isDefault) {
-          await database
-            .update(priceLists)
-            .set({ isDefault: false })
-            .where(eq(priceLists.isDefault, true));
-        }
-
-        // Create price list
-        const [newPriceList] = await database
-          .insert(priceLists)
-          .values(validatedPriceList)
-          .returning();
-
-        // Create price list items if provided
-        if (items && Array.isArray(items) && items.length > 0) {
-          const validatedItems = items.map((item: any) =>
-            insertPriceListItemSchema.parse({
-              ...item,
-              priceListId: newPriceList.id,
-            }),
-          );
-
-          await database.insert(priceListItems).values(validatedItems);
-        }
-
-        console.log(`✅ Created price list: ${newPriceList.id}`);
-        res.status(201).json(newPriceList);
-      } catch (error) {
-        console.error("❌ Error creating price list:", error);
-        if (error instanceof z.ZodError) {
-          return res.status(400).json({
-            message: "Invalid data",
-            errors: error.errors,
-          });
-        }
-        res.status(500).json({
-          error: "Failed to create price list",
-        });
-      }
-    },
-  );
-
-  // Update price list
-  app.put(
-    "/api/price-lists/:id",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const id = parseInt(req.params.id);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { items, storeCodes, ...priceListData } = req.body;
-
-        // Validate price list data
-        const validatedPriceList = insertPriceListSchema.partial().parse({
-          ...priceListData,
-          storeCode: priceListData.storeCode || null,
-        });
-
-        // If this is set as default, unset other defaults
-        if (validatedPriceList.isDefault) {
-          await database
-            .update(priceLists)
-            .set({ isDefault: false })
-            .where(and(eq(priceLists.isDefault, true), ne(priceLists.id, id)));
-        }
-
-        // Update price list
-        const [updatedPriceList] = await database
-          .update(priceLists)
-          .set({
-            ...validatedPriceList,
-            updatedAt: new Date(),
-          })
-          .where(eq(priceLists.id, id))
-          .returning();
-
-        if (!updatedPriceList) {
-          return res.status(404).json({
-            error: "Price list not found",
-          });
-        }
-
-        // Update items if provided
-        if (items && Array.isArray(items)) {
-          // Delete existing items
-          await database
-            .delete(priceListItems)
-            .where(eq(priceListItems.priceListId, id));
-
-          // Insert new items
-          if (items.length > 0) {
-            const validatedItems = items.map((item: any) =>
-              insertPriceListItemSchema.parse({
-                ...item,
-                priceListId: id,
-              }),
-            );
-
-            await database.insert(priceListItems).values(validatedItems);
-          }
-        }
-
-        console.log(`✅ Updated price list: ${id}`);
-        res.json(updatedPriceList);
-      } catch (error) {
-        console.error("❌ Error updating price list:", error);
-        if (error instanceof z.ZodError) {
-          return res.status(400).json({
-            message: "Invalid data",
-            errors: error.errors,
-          });
-        }
-        res.status(500).json({
-          error: "Failed to update price list",
-        });
-      }
-    },
-  );
-
-  // Delete price list
-  app.delete(
-    "/api/price-lists/:id",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const id = parseInt(req.params.id);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        // Check if it's the default price list
-        const [priceList] = await database
-          .select()
-          .from(priceLists)
-          .where(eq(priceLists.id, id))
-          .limit(1);
-
-        if (!priceList) {
-          return res.status(404).json({
-            error: "Price list not found",
-          });
-        }
-
-        if (priceList.isDefault) {
-          return res.status(400).json({
-            error: "Cannot delete default price list",
-          });
-        }
-
-        await database.delete(priceLists).where(eq(priceLists.id, id));
-
-        console.log(`✅ Deleted price list: ${id}`);
-        res.json({ success: true });
-      } catch (error) {
-        console.error("❌ Error deleting price list:", error);
-        res.status(500).json({
-          error: "Failed to delete price list",
-        });
-      }
-    },
-  );
-
-  // Create or update price list item
-  app.post(
-    "/api/price-list-items",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { priceListItems, insertPriceListItemSchema } = await import(
-          "../shared/schema"
-        );
-
-        const { priceListId, productId, price } = req.body;
-
-        console.log(`📝 Creating/updating price list item:`, {
-          priceListId,
-          productId,
-          price,
-        });
-
-        // Validate data
-        const validatedData = insertPriceListItemSchema.parse({
-          priceListId,
-          productId,
-          price: price.toString(),
-        });
-
-        // Check if item already exists
-        const [existingItem] = await database
-          .select()
-          .from(priceListItems)
-          .where(
-            and(
-              eq(priceListItems.priceListId, priceListId),
-              eq(priceListItems.productId, productId),
-            ),
-          )
-          .limit(1);
-
-        let result;
-        if (existingItem) {
-          // Update existing item
-          [result] = await database
-            .update(priceListItems)
-            .set({
-              price: validatedData.price,
-              updatedAt: new Date(),
-            })
-            .where(eq(priceListItems.id, existingItem.id))
-            .returning();
-
-          console.log(`✅ Updated price list item: ${existingItem.id}`);
-        } else {
-          // Create new item
-          [result] = await database
-            .insert(priceListItems)
-            .values(validatedData)
-            .returning();
-
-          console.log(`✅ Created price list item: ${result.id}`);
-        }
-
-        res.json(result);
-      } catch (error) {
-        console.error("❌ Error creating/updating price list item:", error);
-        if (error instanceof z.ZodError) {
-          return res.status(400).json({
-            message: "Invalid data",
-            errors: error.errors,
-          });
-        }
-        res.status(500).json({
-          error: "Failed to create/update price list item",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
-
-  // Delete price list item by priceListId and productId
-  app.delete(
-    "/api/price-list-items/:priceListId/:productId",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const priceListId = parseInt(req.params.priceListId);
-        const productId = parseInt(req.params.productId);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { priceListItems } = await import("../shared/schema");
-
-        await database
-          .delete(priceListItems)
-          .where(
-            and(
-              eq(priceListItems.priceListId, priceListId),
-              eq(priceListItems.productId, productId),
-            ),
-          );
-
-        console.log(
-          `✅ Deleted price list item: priceListId=${priceListId}, productId=${productId}`,
-        );
-        res.json({ success: true });
-      } catch (error) {
-        console.error("❌ Error deleting price list item:", error);
-        res.status(500).json({
-          error: "Failed to delete price list item",
-        });
-      }
-    },
-  );
-
-  // Order Change History API
-  app.get(
-    "/api/order-change-history",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        const { startDate, endDate, storeCode } = req.query;
-
-        console.log("🔍 Change history API called with params:", {
-          startDate,
-          endDate,
-          storeCode,
-          isAdmin: req.user?.isAdmin,
-          userStoreCode: req.user?.storeCode,
-        });
-
-        let query = database
-          .select({
-            id: orderChangeHistory.id,
-            orderId: orderChangeHistory.orderId,
-            orderNumber: orders.orderNumber,
-            changedAt: orderChangeHistory.changedAt,
-            ipAddress: orderChangeHistory.ipAddress,
-            userId: orderChangeHistory.userId,
-            userName: orderChangeHistory.userName,
-            action: orderChangeHistory.action,
-            detailedDescription: orderChangeHistory.detailedDescription,
-            storeCode: orderChangeHistory.storeCode,
-            storeName: storeSettings.storeName,
-          })
-          .from(orderChangeHistory)
-          .leftJoin(orders, eq(orderChangeHistory.orderId, orders.id))
-          .leftJoin(
-            storeSettings,
-            eq(orderChangeHistory.storeCode, storeSettings.storeCode),
-          );
-
-        // Apply filters
-        const conditions = [];
-
-        if (startDate && endDate) {
-          const start = new Date(startDate as string);
-          start.setHours(0, 0, 0, 0);
-          const end = new Date(endDate as string);
-          end.setHours(23, 59, 59, 999);
-
-          conditions.push(
-            and(
-              gte(orderChangeHistory.changedAt, start),
-              lte(orderChangeHistory.changedAt, end),
-            ),
-          );
-        }
-
-        // Store filter based on user permission
-        if (storeCode && storeCode !== "all") {
-          // User selected a specific store
-          conditions.push(
-            eq(orderChangeHistory.storeCode, storeCode as string),
-          );
-          console.log(`🏪 Filtering by selected storeCode: ${storeCode}`);
-        } else if (storeCode === "all" || !storeCode) {
-          // User selected "all" or no filter
-          if (!req.user?.isAdmin) {
-            // Non-admin user - filter by parent stores
-            const userId = req.user?.userId;
-            if (userId) {
-              try {
-                const [userStore] = await database
-                  .select()
-                  .from(storeSettings)
-                  .where(eq(storeSettings.id, userId))
-                  .limit(1);
-
-                if (userStore?.parent && userStore.parent.trim() !== "") {
-                  const parentStoreCodes = userStore.parent
-                    .split(",")
-                    .map((code) => code.trim())
-                    .filter((code) => code !== "");
-
-                  if (parentStoreCodes.length > 0) {
-                    console.log(
-                      `🔒 Non-admin - filtering by parent stores: ${parentStoreCodes.join(", ")}`,
-                    );
-                    conditions.push(
-                      inArray(orderChangeHistory.storeCode, parentStoreCodes),
-                    );
-                  } else if (req.user?.storeCode) {
-                    // No valid parent stores - use user's own store
-                    conditions.push(
-                      eq(orderChangeHistory.storeCode, req.user.storeCode),
-                    );
-                    console.log(
-                      `🔒 Filtering by user storeCode: ${req.user.storeCode}`,
-                    );
-                  }
-                } else if (req.user?.storeCode) {
-                  // Fallback to user's own store
-                  conditions.push(
-                    eq(orderChangeHistory.storeCode, req.user.storeCode),
-                  );
-                  console.log(
-                    `🔒 Filtering by user storeCode: ${req.user.storeCode}`,
-                  );
-                }
-              } catch (error) {
-                console.error("❌ Error fetching user store settings:", error);
-                // If error, restrict to user's own store for security
-                if (req.user?.storeCode) {
-                  conditions.push(
-                    eq(orderChangeHistory.storeCode, req.user.storeCode),
-                  );
-                }
-              }
-            }
-          } else {
-            console.log(`🔓 Admin user - no store filter applied`);
-          }
-        }
-
-        if (conditions.length > 0) {
-          query = query.where(and(...conditions));
-        }
-
-        const history = await query.orderBy(desc(orderChangeHistory.changedAt));
-
-        console.log(`✅ Fetched ${history.length} change history records`);
-        res.json(history);
-      } catch (error) {
-        console.error("❌ Error fetching change history:", error);
-        res.status(500).json({
-          error: "Failed to fetch change history",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
 
   // Payment Methods API
   app.get("/api/payment-methods", async (req: TenantRequest, res) => {
@@ -2006,7 +560,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Add taxRateName and ensure unit field is included
         const productsWithTaxName = products.map((product) => ({
           ...product,
-          taxRateName: getTaxRateName(product.taxRate || "0"),
+          taxRateName: product.taxRateName
+            ? product.taxRateName
+            : getTaxRateName(product.taxRate || "0"),
           unit: product.unit || "Cái", // Default unit if not set
         }));
 
@@ -2044,37 +600,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get unique units from products - MUST BE BEFORE /api/products/:id
-  app.get("/api/products/units", async (req: TenantRequest, res) => {
-    try {
-      const tenantDb = await getTenantDatabase(req);
-      const database = tenantDb || db;
-
-      console.log("🔍 Fetching unique product units from database");
-
-      // Get distinct units from products table
-      const unitsResult = await database
-        .selectDistinct({ unit: products.unit })
-        .from(products)
-        .where(eq(products.isActive, true));
-
-      // Extract unit values and filter out null/undefined
-      const units = unitsResult
-        .map((row) => row.unit)
-        .filter((unit) => unit && unit.trim() !== "")
-        .sort();
-
-      console.log(`✅ Fetched ${units.length} unique product units:`, units);
-      res.json(units);
-    } catch (error) {
-      console.error("❌ Error fetching product units:", error);
-      res.status(500).json({
-        error: "Failed to fetch product units",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-
   // Get single product by ID
   app.get("/api/products/:id", async (req: TenantRequest, res) => {
     try {
@@ -2102,6 +627,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           productType: products.productType,
           trackInventory: products.trackInventory,
           taxRate: products.taxRate,
+          taxRateName: products.taxRateName,
           priceIncludesTax: products.priceIncludesTax,
           afterTaxPrice: products.afterTaxPrice,
           beforeTaxPrice: products.beforeTaxPrice,
@@ -2129,7 +655,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Add taxRateName and ensure unit field is included
       const productWithTaxName = {
         ...product,
-        taxRateName: getTaxRateName(product.taxRate || "0"),
+        taxRateName: product.taxtRateName
+          ? product.taxtRateName
+          : getTaxRateName(product.taxRate || "0"),
         unit: product.unit || "Cái", // Default unit if not set
       };
 
@@ -2142,17 +670,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/products", authMiddleware, async (req: AuthRequest, res) => {
+  app.post("/api/products", async (req: TenantRequest, res) => {
     try {
       console.log("Creating product with data:", req.body);
 
-      // Lấy storeCode từ token
-      const storeCode = req.user?.storeCode;
+      // Check request payload size (limit to 10MB)
+      const MAX_REQUEST_SIZE = 10 * 1024 * 1024; // 10MB in bytes
+      const requestSize = JSON.stringify(req.body).length;
 
-      if (!storeCode) {
-        return res.status(401).json({
-          message: "Không tìm thấy thông tin cửa hàng từ token",
+      if (requestSize > MAX_REQUEST_SIZE) {
+        console.error(
+          `❌ Request too large: ${(requestSize / 1024 / 1024).toFixed(2)}MB`,
+        );
+        return res.status(413).json({
+          message: "Dữ liệu quá lớn. Kích thước tối đa cho phép là 10MB.",
+          error: "REQUEST_TOO_LARGE",
+          size: `${(requestSize / 1024 / 1024).toFixed(2)}MB`,
         });
+      }
+
+      // Validate image size if present (limit to 5MB for images)
+      if (req.body.imageUrl && req.body.imageUrl.startsWith("data:image/")) {
+        const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+        const imageSize = req.body.imageUrl.length;
+
+        if (imageSize > MAX_IMAGE_SIZE) {
+          console.error(
+            `❌ Image too large: ${(imageSize / 1024 / 1024).toFixed(2)}MB`,
+          );
+          return res.status(413).json({
+            message: "Hình ảnh quá lớn. Kích thước tối đa cho phép là 5MB.",
+            error: "IMAGE_TOO_LARGE",
+            size: `${(imageSize / 1024 / 1024).toFixed(2)}MB`,
+          });
+        }
       }
 
       // Get tenant database connection with error handling
@@ -2180,31 +731,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log("✅ Store settings retrieved:", storeSettings);
       } catch (error) {
         console.error("❌ Error getting store settings from storage:", error);
-        return res.status(500).json({
-          message: "Không thể lấy thông tin cài đặt cửa hàng",
-          error: error instanceof Error ? error.message : String(error),
-        });
+        // Use helper function as fallback
+        storeSettings = await getStoreSettings(tenantDb);
       }
       const storePriceIncludesTax = storeSettings?.priceIncludesTax || false;
-
-      // Validate required fields
-      if (!req.body.name || !req.body.name.trim()) {
-        return res.status(400).json({
-          message: "Tên sản phẩm không được để trống",
-        });
-      }
-
-      if (!req.body.categoryId) {
-        return res.status(400).json({
-          message: "Vui lòng chọn danh mục sản phẩm",
-        });
-      }
-
-      if (!req.body.price || isNaN(parseFloat(req.body.price))) {
-        return res.status(400).json({
-          message: "Giá sản phẩm không hợp lệ",
-        });
-      }
 
       // Auto-generate SKU if not provided or empty
       let productSKU = req.body.sku;
@@ -2269,7 +799,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           trackInventory: req.body.trackInventory !== false,
           imageUrl: req.body.imageUrl || null,
           taxRate: req.body.taxRate ? String(req.body.taxRate) : "0",
-          taxRateName: taxRateName,
+          taxRateName: req.body.taxRateName || taxRateName,
           priceIncludesTax: Boolean(
             req.body.priceIncludesTax || storePriceIncludesTax,
           ),
@@ -2336,7 +866,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error && typeof error === "object" && "code" in error) {
         if (error.code === "23505") {
           return res.status(409).json({
-            message: "Sản phẩm đã tồn tại trong h �� thống",
+            message: "Sản phẩm đã tồn tại trong hệ thống",
             error: "Duplicate entry",
           });
         }
@@ -2350,11 +880,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // PUT endpoint for orders to handle full updates including table transfers
+  app.put("/api/orders/:id", async (req: TenantRequest, res) => {
+    try {
+      const orderId = parseInt(req.params.id);
+      const tenantDb = await getTenantDatabase(req);
+      const database = tenantDb || db;
+
+      console.log(
+        `🔄 PUT /api/orders/${orderId} - Full update request:`,
+        req.body,
+      );
+
+      // Validate order exists
+      const [existingOrder] = await database
+        .select()
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1);
+
+      if (!existingOrder) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Build update data from request body
+      const updateData: any = {
+        updatedAt: new Date(),
+      };
+
+      // Handle tableId update (for table transfer)
+      if (req.body.tableId !== undefined) {
+        updateData.tableId = req.body.tableId;
+      }
+
+      // Handle other fields
+      const allowedFields = [
+        "status",
+        "paymentStatus",
+        "isPaid",
+        "subtotal",
+        "tax",
+        "discount",
+        "total",
+        "paymentMethod",
+        "customerName",
+        "customerCount",
+        "notes",
+      ];
+
+      allowedFields.forEach((field) => {
+        if (req.body[field] !== undefined) {
+          updateData[field] = req.body[field];
+        }
+      });
+
+      console.log(`✅ Updating order ${orderId} with:`, updateData);
+
+      const [updatedOrder] = await database
+        .update(orders)
+        .set(updateData)
+        .where(eq(orders.id, orderId))
+        .returning();
+
+      console.log(`✅ Order ${orderId} updated successfully`);
+
+      // If tableId was updated, log the transfer
+      if (
+        req.body.tableId !== undefined &&
+        req.body.tableId !== existingOrder.tableId
+      ) {
+        console.log(`🔄 Table transfer completed:`, {
+          orderId,
+          oldTableId: existingOrder.tableId,
+          newTableId: req.body.tableId,
+          orderNumber: updatedOrder.orderNumber,
+        });
+      }
+
+      res.json(updatedOrder);
+    } catch (error) {
+      console.error("❌ Error updating order:", error);
+      res.status(500).json({
+        error: "Failed to update order",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   app.put("/api/products/:id", async (req: TenantRequest, res) => {
     try {
-      const tenantDb = await getTenantDatabase(req);
       const id = parseInt(req.params.id);
       console.log("🔄 UPDATE PRODUCT - Received data:", id, req.body);
+
+      // Check request payload size (limit to 10MB)
+      const MAX_REQUEST_SIZE = 10 * 1024 * 1024; // 10MB in bytes
+      const requestSize = JSON.stringify(req.body).length;
+
+      if (requestSize > MAX_REQUEST_SIZE) {
+        console.error(
+          `❌ Update request too large: ${(requestSize / 1024 / 1024).toFixed(2)}MB`,
+        );
+        return res.status(413).json({
+          message: "Dữ liệu quá lớn. Kích thước tối đa cho phép là 10MB.",
+          error: "REQUEST_TOO_LARGE",
+          size: `${(requestSize / 1024 / 1024).toFixed(2)}MB`,
+        });
+      }
+
+      // Validate image size if present (limit to 5MB for images)
+      if (req.body.imageUrl && req.body.imageUrl.startsWith("data:image/")) {
+        const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+        const imageSize = req.body.imageUrl.length;
+
+        if (imageSize > MAX_IMAGE_SIZE) {
+          console.error(
+            `❌ Image too large: ${(imageSize / 1024 / 1024).toFixed(2)}MB`,
+          );
+          return res.status(413).json({
+            message: "Hình ảnh quá lớn. Kích thước tối đa cho phép là 5MB.",
+            error: "IMAGE_TOO_LARGE",
+            size: `${(imageSize / 1024 / 1024).toFixed(2)}MB`,
+          });
+        }
+      }
+
+      const tenantDb = await getTenantDatabase(req);
 
       // Get store settings to check price_includes_tax
       const [storeSettingsData] = await tenantDb
@@ -2388,6 +1038,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...req.body,
         price: req.body.price ? req.body.price.toString() : undefined,
         taxRate: req.body.taxRate ? req.body.taxRate.toString() : undefined,
+        taxRateName: req.body.taxRateName ? req.body.taxRateName : "",
         afterTaxPrice:
           req.body.afterTaxPrice &&
           req.body.afterTaxPrice.toString().trim() !== ""
@@ -2476,81 +1127,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete(
-    "/api/products/:id",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const id = parseInt(req.params.id);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
+  app.delete("/api/products/:id", async (req: TenantRequest, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const tenantDb = await getTenantDatabase(req);
+      const deleted = await storage.deleteProduct(id, tenantDb);
 
-        // Check if user is admin
-        if (!req.user?.isAdmin) {
-          return res.status(403).json({
-            message: "Chỉ admin mới có quyền xóa sản phẩm",
-            code: "ADMIN_REQUIRED",
-          });
-        }
-
-        // Check if product exists in order_items
-        const [orderItemCheck] = await database
-          .select({ count: count() })
-          .from(orderItemsTable)
-          .where(eq(orderItemsTable.productId, id));
-
-        if (orderItemCheck && orderItemCheck.count > 0) {
-          return res.status(400).json({
-            message: `Không thể xóa sản phẩm vì đã có ${orderItemCheck.count} đơn hàng sử dụng`,
-            code: "PRODUCT_IN_ORDER_ITEMS",
-          });
-        }
-
-        // Check if product exists in purchase_receipt_items
-        const [purchaseItemCheck] = await database
-          .select({ count: count() })
-          .from(purchaseReceiptItems)
-          .where(eq(purchaseReceiptItems.productId, id));
-
-        if (purchaseItemCheck && purchaseItemCheck.count > 0) {
-          return res.status(400).json({
-            message: `Không thể xóa sản phẩm vì đã có ${purchaseItemCheck.count} phiếu nhập kho sử dụng`,
-            code: "PRODUCT_IN_PURCHASE_ITEMS",
-          });
-        }
-
-        const deleted = await storage.deleteProduct(id, tenantDb);
-
-        if (!deleted) {
-          return res.status(404).json({
-            message: "Product not found",
-          });
-        }
-
-        console.log(
-          `✅ Product ${id} deleted successfully by admin user ${req.user.userId}`,
-        );
-        res.json({
-          message: "Xóa sản phẩm thành công",
-        });
-      } catch (error) {
-        console.error("Delete product error:", error);
-
-        if (error instanceof Error) {
-          if (error.message.includes("Cannot delete product")) {
-            return res.status(400).json({
-              message: error.message,
-              code: "PRODUCT_IN_USE",
-            });
-          }
-        }
-
-        res.status(500).json({
-          message: "Failed to delete product",
+      if (!deleted) {
+        return res.status(404).json({
+          message: "Product not found",
         });
       }
-    },
-  );
+
+      res.json({
+        message: "Product deleted successfully",
+      });
+    } catch (error) {
+      console.error("Delete product error:", error);
+
+      if (error instanceof Error) {
+        if (error.message.includes("Cannot delete product")) {
+          return res.status(400).json({
+            message: error.message,
+            code: "PRODUCT_IN_USE",
+          });
+        }
+      }
+
+      res.status(500).json({
+        message: "Failed to delete product",
+      });
+    }
+  });
 
   // New endpoint to cleanup inactive products
   app.delete(
@@ -2830,226 +1438,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
-  // Get orders by date range with floor filter
-  app.get(
-    "/api/orders/date-range/:startDate/:endDate/:floor?",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const { startDate, endDate, floor } = req.params;
-        const { storeFilter } = req.query;
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        console.log("Date range API called with params:", {
-          startDate: startDate,
-          endDate: endDate,
-          rawStartDate: startDate,
-          rawEndDate: endDate,
-          floorFilter: floor || "all",
-          storeFilter: storeFilter || "all",
-          isAdmin: req.user?.isAdmin,
-        });
-
-        // Build where conditions
-        const whereConditions = [];
-
-        if (startDate && endDate) {
-          // Parse date in YYYY-MM-DD HH:mm:ss format to avoid timezone issues
-          let start: Date;
-          let end: Date;
-
-          // Parse using local timezone (YYYY-MM-DD HH:mm:ss format)
-          if (startDate.includes(" ") && startDate.includes(":")) {
-            // Format: YYYY-MM-DD HH:mm:ss
-            const parts = startDate.split(" ");
-            const dateParts = parts[0].split("-");
-            const timeParts = parts[1].split(":");
-            start = new Date(
-              parseInt(dateParts[0]),
-              parseInt(dateParts[1]) - 1,
-              parseInt(dateParts[2]),
-              parseInt(timeParts[0]),
-              parseInt(timeParts[1]),
-              parseInt(timeParts[2] || "0"),
-              0,
-            );
-          } else if (startDate.includes("T")) {
-            // ISO format fallback
-            start = new Date(startDate);
-          } else {
-            // Date-only format
-            start = new Date(startDate);
-            start.setHours(0, 0, 0, 0);
-          }
-
-          if (endDate.includes(" ") && endDate.includes(":")) {
-            // Format: YYYY-MM-DD HH:mm:ss
-            const parts = endDate.split(" ");
-            const dateParts = parts[0].split("-");
-            const timeParts = parts[1].split(":");
-            end = new Date(
-              parseInt(dateParts[0]),
-              parseInt(dateParts[1]) - 1,
-              parseInt(dateParts[2]),
-              parseInt(timeParts[0]),
-              parseInt(timeParts[1]),
-              parseInt(timeParts[2] || "0"),
-              999,
-            );
-          } else if (endDate.includes("T")) {
-            // ISO format fallback
-            end = new Date(endDate);
-          } else {
-            // Date-only format
-            end = new Date(endDate);
-            end.setHours(23, 59, 59, 999);
-          }
-
-          const [getSetting] = await database
-            .select()
-            .from(generalSettings)
-            .where(eq(generalSettings.settingCode, "ST-002"))
-            .limit(1);
-
-          if (getSetting.isActive === true) {
-            whereConditions.push(
-              gte(orders.createdAt, start),
-              lte(orders.createdAt, end),
-            );
-          } else {
-            whereConditions.push(
-              or(
-                and(
-                  gte(orders.updatedAt, start),
-                  lte(orders.updatedAt, end),
-                  or(
-                    eq(orders.status, "paid"),
-                    eq(orders.status, "completed"),
-                    eq(orders.status, "canceled"),
-                  ),
-                ),
-                and(
-                  gte(orders.createdAt, start),
-                  lte(orders.createdAt, end),
-                  eq(orders.status, "pending"),
-                ),
-              ),
-            );
-          }
-
-          console.log(
-            `📅 Filtering by updatedAt (default): ${start} to ${end}`,
-          );
-        }
-
-        // Floor filter
-        if (floor && floor !== "all") {
-          whereConditions.push(eq(orders.floor, floor));
-        }
-
-        // Store filter based on user permission
-        if (storeFilter && storeFilter !== "all") {
-          whereConditions.push(eq(orders.storeCode, storeFilter as string));
-          console.log(`🏪 Filtering by selected storeCode: ${storeFilter}`);
-        } else if (storeFilter === "all") {
-          if (req.user?.isAdmin) {
-            console.log(`🔓 Admin date range - no store filter applied`);
-          } else {
-            const userId = req.user?.userId;
-            if (userId) {
-              const [userStore] = await database
-                .select()
-                .from(storeSettings)
-                .where(eq(storeSettings.id, userId))
-                .limit(1);
-
-              if (userStore?.parent) {
-                const parentStoreCodes = userStore.parent
-                  .split(",")
-                  .map((code) => code.trim());
-                console.log(
-                  `🔒 Non-admin date range - filtering by parent stores: ${parentStoreCodes.join(", ")}`,
-                );
-                whereConditions.push(
-                  inArray(orders.storeCode, parentStoreCodes),
-                );
-              } else {
-                whereConditions.push(eq(orders.storeCode, req.user.storeCode));
-              }
-            }
-          }
-        } else if (!req.user?.isAdmin && req.user?.storeCode) {
-          whereConditions.push(eq(orders.storeCode, req.user.storeCode));
-          console.log(`🔒 Filtering by user storeCode: ${req.user.storeCode}`);
-        }
-
-        const ordersList = await database
-          .select()
-          .from(orders)
-          .where(
-            whereConditions.length > 0 ? and(...whereConditions) : undefined,
-          )
-          .orderBy(desc(orders.updatedAt));
-
-        console.log(`✅ Date range API - Found ${ordersList.length} orders`);
-
-        // Map order items for each order
-        const ordersWithItems = await Promise.all(
-          ordersList.map(async (order) => {
-            const items = await database
-              .select()
-              .from(orderItemsTable)
-              .where(eq(orderItemsTable.orderId, order.id));
-
-            return {
-              ...order,
-              items,
-            };
-          }),
-        );
-
-        console.log(
-          `✅ Date range API with items - Found ${ordersWithItems.length} orders with complete details`,
-        );
-        res.json(ordersWithItems || []);
-      } catch (error) {
-        console.error("Error fetching orders by date range:", error);
-        res.json([]);
-      }
-    },
-  );
-
   // API lấy danh sách đơn hàng với filter và pagination
-  app.get("/api/orders/list", authMiddleware, async (req: AuthRequest, res) => {
-    // Disable cache for real-time data
-    res.set({
-      "Cache-Control": "no-store, no-cache, must-revalidate, private",
-      Pragma: "no-cache",
-      Expires: "0",
-    });
-
+  app.get("/api/orders/list", async (req: TenantRequest, res) => {
     try {
       const {
         startDate,
         endDate,
-        updatedAtStart,
-        updatedAtEnd,
-        statusIn,
         customerName,
-        customerSearch,
         orderNumber,
-        productSearch,
         customerCode,
         status,
         salesChannel,
         einvoiceStatus,
         invoiceStatus,
         paymentMethod,
-        storeFilter,
         page = "1",
         limit,
-        sortBy = "createdAt",
+        sortBy = "orderedAt",
         sortOrder = "desc",
       } = req.query;
 
@@ -3060,23 +1465,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("🔍 GET /api/orders/list - Filter params:", {
         startDate,
         endDate,
-        updatedAtStart,
-        updatedAtEnd,
-        statusIn,
         customerName,
         orderNumber,
-        productSearch,
         customerCode,
         status,
         salesChannel,
         einvoiceStatus,
         invoiceStatus,
         paymentMethod,
-        storeFilter,
         page: pageNum,
         limit: limitNum,
-        userStoreCode: req.user?.storeCode,
-        isAdmin: req.user?.isAdmin,
       });
 
       const tenantDb = await getTenantDatabase(req);
@@ -3085,120 +1483,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Build where conditions
       const whereConditions = [];
 
-      // Filter by storeCode based on user permission and store filter
-      if (storeFilter && storeFilter !== "all") {
-        // User selected a specific store from dropdown
-        whereConditions.push(eq(orders.storeCode, storeFilter as string));
-        console.log(`🏪 Filtering by selected storeCode: ${storeFilter}`);
-      } else if (storeFilter === "all") {
-        if (req.user?.isAdmin) {
-          // Admin with "all" selected - fetch all orders
-          console.log(`🔓 Admin user with "all" filter - fetching all orders`);
-        } else {
-          // Non-admin with "all" selected - fetch orders from parent stores
-          const userId = req.user?.userId;
-          if (userId) {
-            const [userStore] = await database
-              .select()
-              .from(storeSettings)
-              .where(eq(storeSettings.id, userId))
-              .limit(1);
-
-            if (userStore?.parent) {
-              const parentStoreCodes = userStore.parent
-                .split(",")
-                .map((code) => code.trim());
-              console.log(
-                `🔒 Non-admin user with "all" filter - fetching orders from parent stores: ${parentStoreCodes.join(", ")}`,
-              );
-              whereConditions.push(inArray(orders.storeCode, parentStoreCodes));
-            } else {
-              // Fallback to user's own store if no parent defined
-              whereConditions.push(eq(orders.storeCode, req.user.storeCode));
-              console.log(
-                `🔒 Non-admin user - no parent stores, using own store: ${req.user.storeCode}`,
-              );
-            }
-          }
-        }
-      } else if (!req.user?.isAdmin && req.user?.storeCode) {
-        // Non-admin user without filter - see their own store
-        whereConditions.push(eq(orders.storeCode, req.user.storeCode));
-        console.log(`🔒 Filtering by user storeCode: ${req.user.storeCode}`);
-      } else if (req.user?.isAdmin) {
-        console.log(
-          `🔓 Admin user - fetching all orders (no store filter applied)`,
-        );
-      }
-
-      // Date range filter - check if using updatedAt or createdAt
-      if (updatedAtStart && updatedAtEnd) {
-        // Filter by updatedAt (for cancelled/completed orders)
-        let start: Date;
-        let end: Date;
-
-        if (
-          typeof updatedAtStart === "string" &&
-          updatedAtStart.length === 8 &&
-          /^\d{8}$/.test(updatedAtStart)
-        ) {
-          const year = parseInt(updatedAtStart.substring(0, 4));
-          const month = parseInt(updatedAtStart.substring(4, 6)) - 1;
-          const day = parseInt(updatedAtStart.substring(6, 8));
-          start = new Date(year, month, day, 0, 0, 0, 0);
-        } else {
-          start = new Date(updatedAtStart as string);
-          start.setHours(0, 0, 0, 0);
-        }
-
-        if (
-          typeof updatedAtEnd === "string" &&
-          updatedAtEnd.length === 8 &&
-          /^\d{8}$/.test(updatedAtEnd)
-        ) {
-          const year = parseInt(updatedAtEnd.substring(0, 4));
-          const month = parseInt(updatedAtEnd.substring(4, 6)) - 1;
-          const day = parseInt(updatedAtEnd.substring(6, 8));
-          end = new Date(year, month, day, 23, 59, 59, 999);
-        } else {
-          end = new Date(updatedAtEnd as string);
-          end.setHours(23, 59, 59, 999);
-        }
-
-        const [getSetting] = await database
-          .select()
-          .from(generalSettings)
-          .where(eq(generalSettings.settingCode, "ST-002"))
-          .limit(1);
-        if (getSetting.isActive === true) {
-          whereConditions.push(
-            gte(orders.createdAt, start),
-            lte(orders.createdAt, end),
-          );
-        } else {
-          whereConditions.push(
-            or(
-              and(
-                gte(orders.updatedAt, start),
-                lte(orders.updatedAt, end),
-                or(
-                  eq(orders.status, "cancelled"),
-                  eq(orders.status, "completed"),
-                  eq(orders.status, "paid"),
-                ),
-              ),
-              and(
-                gte(orders.createdAt, start),
-                lte(orders.createdAt, end),
-                eq(orders.status, "pending"),
-              ),
-            ),
-          );
-        }
-
-        console.log(`📅 Filtering by updatedAt: ${start} to ${end}`);
-      } else if (startDate && endDate) {
-        // Filter by createdAt (default)
+      // Date range filter - support yyyyMMdd format
+      if (startDate && endDate) {
         let start: Date;
         let end: Date;
 
@@ -3207,11 +1493,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           startDate.length === 8 &&
           /^\d{8}$/.test(startDate)
         ) {
+          // Parse yyyyMMdd format
           const year = parseInt(startDate.substring(0, 4));
-          const month = parseInt(startDate.substring(4, 6)) - 1;
+          const month = parseInt(startDate.substring(4, 6)) - 1; // Month is 0-indexed
           const day = parseInt(startDate.substring(6, 8));
           start = new Date(year, month, day, 0, 0, 0, 0);
         } else {
+          // Parse standard date format
           start = new Date(startDate as string);
           start.setHours(0, 0, 0, 0);
         }
@@ -3221,70 +1509,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           endDate.length === 8 &&
           /^\d{8}$/.test(endDate)
         ) {
+          // Parse yyyyMMdd format
           const year = parseInt(endDate.substring(0, 4));
-          const month = parseInt(endDate.substring(4, 6)) - 1;
+          const month = parseInt(endDate.substring(4, 6)) - 1; // Month is 0-indexed
           const day = parseInt(endDate.substring(6, 8));
           end = new Date(year, month, day, 23, 59, 59, 999);
         } else {
+          // Parse standard date format
           end = new Date(endDate as string);
           end.setHours(23, 59, 59, 999);
         }
 
-        const [getSetting] = await database
-          .select()
-          .from(generalSettings)
-          .where(eq(generalSettings.settingCode, "ST-002"))
-          .limit(1);
-        if (getSetting.isActive === true) {
-          whereConditions.push(
-            gte(orders.createdAt, start),
-            lte(orders.createdAt, end),
-          );
-        } else {
-          whereConditions.push(
-            or(
-              and(
-                gte(orders.updatedAt, start),
-                lte(orders.updatedAt, end),
-                or(
-                  eq(orders.status, "cancelled"),
-                  eq(orders.status, "completed"),
-                  eq(orders.status, "paid"),
-                ),
-              ),
-              and(
-                gte(orders.createdAt, start),
-                lte(orders.createdAt, end),
-                eq(orders.status, "pending"),
-              ),
-            ),
-          );
-        }
-        console.log(`📅 Filtering by updatedAt (default): ${start} to ${end}`);
-      }
-
-      // Customer search filter (name, phone, or tax code)
-      if (customerSearch && customerSearch.trim()) {
-        const searchTerm = customerSearch.trim();
-        console.log(
-          `🔍 Customer search filter - searching for: "${searchTerm}"`,
-        );
-
-        // Use LIKE with %searchTerm% to find exact substring matches
-        // For example: "0835" will match phones like "0835123456", "1234083567", etc.
         whereConditions.push(
-          or(
-            ilike(orders.customerName, `%${searchTerm}%`),
-            ilike(orders.customerPhone, `%${searchTerm}%`),
-            ilike(orders.customerTaxCode, `%${searchTerm}%`),
-          ),
+          gte(orders.orderedAt, start),
+          lte(orders.orderedAt, end),
         );
-
-        console.log(`✅ Customer search filter applied for: "${searchTerm}"`);
       }
 
-      // Legacy customer name filter (for backward compatibility)
-      if (customerName && !customerSearch) {
+      // Customer name filter
+      if (customerName) {
         whereConditions.push(ilike(orders.customerName, `%${customerName}%`));
       }
 
@@ -3293,89 +1536,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         whereConditions.push(ilike(orders.orderNumber, `%${orderNumber}%`));
       }
 
-      // Product search filter - find orders containing items with matching product name or SKU
-      if (productSearch && productSearch.trim()) {
-        console.log(`🔍 Filtering by product search: ${productSearch}`);
-
-        // Normalize search term for better matching
-        const normalizedSearch = productSearch.trim().toLowerCase();
-
-        // First, find products matching the search term
-        // Use LOWER() for case-insensitive exact phrase matching
-        const matchingProducts = await database
-          .select({
-            id: products.id,
-            name: products.name,
-            sku: products.sku,
-          })
-          .from(products)
-          .where(
-            or(
-              sql`LOWER(${products.name}) LIKE ${`%${normalizedSearch}%`}`,
-              sql`LOWER(${products.sku}) LIKE ${`%${normalizedSearch}%`}`,
-            ),
-          );
-
-        // IMPORTANT: Only match products that contain the EXACT PHRASE
-        // For example, "giặt khô" should only match products with "giặt khô" together,
-        // not products with just "giặt" or just "khô"
-        const filteredProducts = matchingProducts.filter((p) => {
-          const nameLower = (p.name || "").toLowerCase();
-          const skuLower = (p.sku || "").toLowerCase();
-
-          // Strict match: the search term must appear as a complete substring
-          // This ensures "giặt khô" only matches products containing "giặt khô" as a phrase
-          const nameMatch = nameLower.includes(normalizedSearch);
-          const skuMatch = skuLower.includes(normalizedSearch);
-
-          return nameMatch || skuMatch;
-        });
-
-        console.log(
-          `🔍 Found ${matchingProducts.length} products initially, ${filteredProducts.length} with exact phrase "${normalizedSearch}"`,
-        );
-
-        if (filteredProducts.length > 0) {
-          const productIds = filteredProducts.map((p) => p.id);
-
-          // Find order IDs that have items with these products
-          const ordersWithProducts = await database
-            .selectDistinct({ orderId: orderItemsTable.orderId })
-            .from(orderItemsTable)
-            .where(inArray(orderItemsTable.productId, productIds));
-
-          const orderIds = ordersWithProducts.map((o) => o.orderId);
-
-          if (orderIds.length > 0) {
-            whereConditions.push(inArray(orders.id, orderIds));
-            console.log(
-              `✅ Found ${orderIds.length} orders with products containing exact phrase "${normalizedSearch}"`,
-            );
-          } else {
-            // No orders found with matching products - return empty result
-            whereConditions.push(sql`1 = 0`);
-            console.log(
-              `❌ No orders found with products containing "${normalizedSearch}"`,
-            );
-          }
-        } else {
-          // No products match the exact phrase - return empty result
-          whereConditions.push(sql`1 = 0`);
-          console.log(
-            `❌ No products found with exact phrase "${normalizedSearch}"`,
-          );
-        }
-      }
-
-      // Status filter - check for statusIn parameter first
-      if (statusIn && typeof statusIn === "string") {
-        // When filtering by updated date, only show paid/cancelled orders
-        const allowedStatuses = statusIn.split(",").map((s) => s.trim());
-        console.log(`📊 Filtering by statusIn: ${allowedStatuses.join(", ")}`);
-        whereConditions.push(
-          or(...allowedStatuses.map((s) => eq(orders.status, s))),
-        );
-      } else if (status && status !== "all") {
+      // Status filter
+      if (status && status !== "all") {
         whereConditions.push(eq(orders.status, status as string));
       }
 
@@ -3385,8 +1547,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             eq(orders.status, "paid"),
             eq(orders.status, "completed"),
             eq(orders.status, "served"),
-            eq(orders.status, "pending"),
             eq(orders.status, "cancelled"),
+            eq(orders.status, "pending"),
+            eq(orders.status, "processing"),
+            eq(orders.status, "refunded"),
           ),
         );
       }
@@ -3431,27 +1595,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Log final where conditions for debugging
-      if (customerSearch) {
-        console.log(
-          `🔍 Total where conditions applied: ${whereConditions.length}`,
-        );
-      }
-
       // Get total count for pagination
       const [totalCountResult] = await database
         .select({
           count: count(),
         })
         .from(orders)
-        .where(and(...(whereConditions.length > 0 ? whereConditions : [])));
+        .where(
+          whereConditions.length > 0 ? and(...whereConditions) : undefined,
+        );
 
       const totalCount = totalCountResult?.count || 0;
       const totalPages = limitNum ? Math.ceil(totalCount / limitNum) : 1;
 
       // Get paginated orders - simplified query without JOIN
       const orderBy =
-        sortOrder === "asc" ? asc(orders.updatedAt) : desc(orders.updatedAt);
+        sortOrder === "asc" ? asc(orders.orderedAt) : desc(orders.orderedAt);
 
       let ordersQuery = database
         .select()
@@ -3539,11 +1698,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 orderId: orderItemsTable.orderId,
                 productId: orderItemsTable.productId,
                 quantity: orderItemsTable.quantity,
-                unitPrice: orderItemsTable.unitPrice,
+                unitPrice: products.price,
                 total: orderItemsTable.total,
                 discount: orderItemsTable.discount,
                 notes: orderItemsTable.notes,
                 tax: orderItemsTable.tax,
+                taxRate: products.taxRate,
                 priceBeforeTax: orderItemsTable.priceBeforeTax,
                 // Product fields with safe handling
                 productName: sql<string>`COALESCE(${products.name}, 'Unknown Product')`,
@@ -3559,14 +1719,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
               productId: item.productId,
               quantity: item.quantity,
               unit: "cái", // Default unit
-              unitPrice:
-                Number(item.priceBeforeTax) > 0
-                  ? Number(item.priceBeforeTax) + Number(item.discount)
-                  : item.unitPrice,
+              unitPrice: order.priceIncludeTax
+                ? Math.round(item.unitPrice / (1 + item.taxRate / 100))
+                : item.unitPrice,
               total: item.total,
               discount: item.discount || "0.00",
+              discountBeforeTax:
+                Math.round(item.discount / (1 + item.taxRate / 100)) || "0.00",
               notes: item.notes,
               tax: item.tax || "0.00",
+              taxRate: item.taxRate || "0",
               priceBeforeTax: item.priceBeforeTax || "0.00",
               productName: item.productName || "Unknown Product",
               productSku: item.productSku || "",
@@ -3812,6 +1974,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.isPaid = req.body.isPaid;
       }
 
+      if (req.body.tableId !== undefined) {
+        updateData.tableId = req.body.tableId;
+      }
+
       // Add other fields if needed
       if (Object.keys(req.body).length > 0) {
         Object.assign(updateData, {
@@ -3829,6 +1995,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`✅ Order ${orderId} updated successfully:`, updatedOrder);
 
+      // If tableId was updated, log the transfer
+      if (
+        req.body.tableId !== undefined &&
+        req.body.tableId !== existingOrder.tableId
+      ) {
+        console.log(`🔄 Table transfer completed:`, {
+          orderId,
+          oldTableId: existingOrder.tableId,
+          newTableId: req.body.tableId,
+          orderNumber: updatedOrder.orderNumber,
+        });
+      }
+
       res.json(updatedOrder);
     } catch (error) {
       console.error("❌ Error updating order:", error);
@@ -3842,12 +2021,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get orders by date range
   app.get(
     "/api/orders/date-range/:startDate/:endDate/:floor?",
-    tenantMiddleware,
-    authMiddleware,
-    async (req: AuthRequest, res) => {
+    async (req: TenantRequest, res) => {
       try {
         const { startDate, endDate, floor } = req.params;
-        const { storeFilter } = req.query;
         const page = parseInt(req.query.page as string) || 1;
         const limit = parseInt(req.query.limit as string) || 1000; // Increase limit to get all data
         const floorFilter = floor || "all";
@@ -3860,145 +2036,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
           rawStartDate: startDate,
           rawEndDate: endDate,
           floorFilter: floorFilter,
-          storeFilter: storeFilter,
-          isAdmin: req.user?.isAdmin,
         });
 
-        // Build where conditions
-        const whereConditions = [];
-        // Date range filter - support yyyyMMdd format
-        if (startDate && endDate) {
-          // Parse date in YYYY-MM-DD HH:mm:ss format to avoid timezone issues
-          let start: Date;
-          let end: Date;
+        // Parse date in YYYY-MM-DD HH:mm:ss format to avoid timezone issues
+        let start: Date;
+        let end: Date;
 
-          // Parse using local timezone (YYYY-MM-DD HH:mm:ss format)
-          if (startDate.includes(" ") && startDate.includes(":")) {
-            // Format: YYYY-MM-DD HH:mm:ss
-            const parts = startDate.split(" ");
-            const dateParts = parts[0].split("-");
-            const timeParts = parts[1].split(":");
-            start = new Date(
-              parseInt(dateParts[0]),
-              parseInt(dateParts[1]) - 1,
-              parseInt(dateParts[2]),
-              parseInt(timeParts[0]),
-              parseInt(timeParts[1]),
-              parseInt(timeParts[2] || "0"),
-              0,
-            );
-          } else if (startDate.includes("T")) {
-            // ISO format fallback
-            start = new Date(startDate);
-          } else {
-            // Date-only format
-            start = new Date(startDate);
-            start.setHours(0, 0, 0, 0);
-          }
-
-          if (endDate.includes(" ") && endDate.includes(":")) {
-            // Format: YYYY-MM-DD HH:mm:ss
-            const parts = endDate.split(" ");
-            const dateParts = parts[0].split("-");
-            const timeParts = parts[1].split(":");
-            end = new Date(
-              parseInt(dateParts[0]),
-              parseInt(dateParts[1]) - 1,
-              parseInt(dateParts[2]),
-              parseInt(timeParts[0]),
-              parseInt(timeParts[1]),
-              parseInt(timeParts[2] || "0"),
-              999,
-            );
-          } else if (endDate.includes("T")) {
-            // ISO format fallback
-            end = new Date(endDate);
-          } else {
-            // Date-only format
-            end = new Date(endDate);
-            end.setHours(23, 59, 59, 999);
-          }
-
-          const [getSetting] = await database
-            .select()
-            .from(generalSettings)
-            .where(eq(generalSettings.settingCode, "ST-002"))
-            .limit(1);
-
-          if (getSetting.isActive === true) {
-            whereConditions.push(
-              gte(orders.createdAt, start),
-              lte(orders.createdAt, end),
-            );
-          } else {
-            whereConditions.push(
-              or(
-                and(
-                  gte(orders.updatedAt, start),
-                  lte(orders.updatedAt, end),
-                  or(
-                    eq(orders.status, "paid"),
-                    eq(orders.status, "completed"),
-                    eq(orders.status, "canceled"),
-                  ),
-                ),
-                and(
-                  gte(orders.createdAt, start),
-                  lte(orders.createdAt, end),
-                  eq(orders.status, "pending"),
-                ),
-              ),
-            );
-          }
+        // Parse using local timezone (YYYY-MM-DD HH:mm:ss format)
+        if (startDate.includes(" ") && startDate.includes(":")) {
+          // Format: YYYY-MM-DD HH:mm:ss
+          const parts = startDate.split(" ");
+          const dateParts = parts[0].split("-");
+          const timeParts = parts[1].split(":");
+          start = new Date(
+            parseInt(dateParts[0]),
+            parseInt(dateParts[1]) - 1,
+            parseInt(dateParts[2]),
+            parseInt(timeParts[0]),
+            parseInt(timeParts[1]),
+            parseInt(timeParts[2] || "0"),
+            0,
+          );
+        } else if (startDate.includes("T")) {
+          // ISO format fallback
+          start = new Date(startDate);
+        } else {
+          // Date-only format
+          start = new Date(startDate);
+          start.setHours(0, 0, 0, 0);
         }
+
+        if (endDate.includes(" ") && endDate.includes(":")) {
+          // Format: YYYY-MM-DD HH:mm:ss
+          const parts = endDate.split(" ");
+          const dateParts = parts[0].split("-");
+          const timeParts = parts[1].split(":");
+          end = new Date(
+            parseInt(dateParts[0]),
+            parseInt(dateParts[1]) - 1,
+            parseInt(dateParts[2]),
+            parseInt(timeParts[0]),
+            parseInt(timeParts[1]),
+            parseInt(timeParts[2] || "0"),
+            999,
+          );
+        } else if (endDate.includes("T")) {
+          // ISO format fallback
+          end = new Date(endDate);
+        } else {
+          // Date-only format
+          end = new Date(endDate);
+          end.setHours(23, 59, 59, 999);
+        }
+
+        console.log(
+          `📅 Parsed dates: ${startDate} -> ${start.toLocaleString()} | ${endDate} -> ${end.toLocaleString()}`,
+        );
+
+        console.log("Date range filter with parsed dates:", {
+          startDate,
+          endDate,
+          startParsed: start,
+          endParsed: end,
+          startLocal: start.toLocaleString(),
+          endLocal: end.toLocaleString(),
+        });
 
         // Use database query with proper TIMESTAMPTZ date filtering on createdAt field
         let database = tenantDb || db;
 
         let filteredOrders;
-
-        // Add store filter based on user permission
-        if (storeFilter && storeFilter !== "all") {
-          // User selected a specific store - filter by that store
-          whereConditions.push(eq(orders.storeCode, storeFilter as string));
-          console.log(
-            `🔒 Date range - filtering by selected store: ${storeFilter}`,
-          );
-        } else if (storeFilter === "all" || !storeFilter) {
-          // User selected "all" or no filter
-          if (!req.user?.isAdmin) {
-            // Non-admin user - filter by parent stores only
-            const userId = req.user?.userId;
-            if (userId) {
-              const [userStore] = await database
-                .select()
-                .from(storeSettings)
-                .where(eq(storeSettings.id, userId))
-                .limit(1);
-
-              if (userStore?.parent) {
-                const parentStoreCodes = userStore.parent
-                  .split(",")
-                  .map((code) => code.trim());
-                console.log(
-                  `🔒 Non-admin date range - filtering by parent stores: ${parentStoreCodes.join(", ")}`,
-                );
-                whereConditions.push(
-                  inArray(orders.storeCode, parentStoreCodes),
-                );
-              } else {
-                // No parent stores defined - return empty result
-                console.log(
-                  `🔒 Non-admin date range - no parent stores, returning empty`,
-                );
-                return res.json([]);
-              }
-            }
-          } else {
-            // Admin with "all" - no store filter, show all data
-            console.log(`🔓 Admin date range - no store filter applied`);
-          }
-        }
 
         if (floorFilter && floorFilter !== "all") {
           // Join with tables to filter by floor
@@ -4008,7 +2115,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })
             .from(orders)
             .leftJoin(tables, eq(orders.tableId, tables.id))
-            .where(and(...whereConditions, eq(tables.floor, floorFilter)))
+            .where(
+              and(
+                gte(orders.createdAt, start),
+                lte(orders.createdAt, end),
+                eq(tables.floor, floorFilter),
+              ),
+            )
             .orderBy(desc(orders.createdAt), desc(orders.id));
         } else {
           filteredOrders = await database
@@ -4016,205 +2129,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ...orders,
             })
             .from(orders)
-            .where(and(...whereConditions))
+            .where(
+              and(gte(orders.createdAt, start), lte(orders.createdAt, end)),
+            )
             .orderBy(desc(orders.createdAt), desc(orders.id));
         }
 
         console.log("Orders by date range - Database filter results:", {
           filteredCount: filteredOrders.length,
           dateRange: `${startDate} to ${endDate}`,
-          sampleFilteredOrder: filteredOrders[0]
-            ? {
-                id: filteredOrders[0].id,
-                orderNumber: filteredOrders[0].orderNumber,
-                createdAt: filteredOrders[0].createdAt,
-                createdAtLocal: new Date(
-                  filteredOrders[0].createdAt,
-                ).toLocaleString(),
-                status: filteredOrders[0].status,
-              }
-            : null,
-        });
-        // Return all filtered orders (no pagination for reports)
-        res.json(filteredOrders);
-      } catch (error) {
-        console.error("Error fetching orders by date range:", error);
-        res.status(500).json({
-          error: "Failed to fetch orders",
-        });
-      }
-    },
-  );
-
-  // Get orders by date range
-  app.get(
-    "/api/orders/date-range/:startDate/:endDate",
-    tenantMiddleware,
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const { startDate, endDate, storeCode } = req.params;
-        const page = parseInt(req.query.page as string) || 1;
-        const limit = parseInt(req.query.limit as string) || 1000; // Increase limit to get all data
-        const floorFilter = floor || "all";
-
-        const tenantDb = await getTenantDatabase(req);
-
-        console.log("Date range API called with params:", {
-          startDate,
-          endDate,
-          rawStartDate: startDate,
-          rawEndDate: endDate,
-          isAdmin: req.user?.isAdmin,
-        });
-
-        // Build where conditions
-        const whereConditions = [];
-        // Date range filter - support yyyyMMdd format
-        if (startDate && endDate) {
-          // Parse date in YYYY-MM-DD HH:mm:ss format to avoid timezone issues
-          let start: Date;
-          let end: Date;
-
-          // Parse using local timezone (YYYY-MM-DD HH:mm:ss format)
-          if (startDate.includes(" ") && startDate.includes(":")) {
-            // Format: YYYY-MM-DD HH:mm:ss
-            const parts = startDate.split(" ");
-            const dateParts = parts[0].split("-");
-            const timeParts = parts[1].split(":");
-            start = new Date(
-              parseInt(dateParts[0]),
-              parseInt(dateParts[1]) - 1,
-              parseInt(dateParts[2]),
-              parseInt(timeParts[0]),
-              parseInt(timeParts[1]),
-              parseInt(timeParts[2] || "0"),
-              0,
-            );
-          } else if (startDate.includes("T")) {
-            // ISO format fallback
-            start = new Date(startDate);
-          } else {
-            // Date-only format
-            start = new Date(startDate);
-            start.setHours(0, 0, 0, 0);
-          }
-
-          if (endDate.includes(" ") && endDate.includes(":")) {
-            // Format: YYYY-MM-DD HH:mm:ss
-            const parts = endDate.split(" ");
-            const dateParts = parts[0].split("-");
-            const timeParts = parts[1].split(":");
-            end = new Date(
-              parseInt(dateParts[0]),
-              parseInt(dateParts[1]) - 1,
-              parseInt(dateParts[2]),
-              parseInt(timeParts[0]),
-              parseInt(timeParts[1]),
-              parseInt(timeParts[2] || "0"),
-              999,
-            );
-          } else if (endDate.includes("T")) {
-            // ISO format fallback
-            end = new Date(endDate);
-          } else {
-            // Date-only format
-            end = new Date(endDate);
-            end.setHours(23, 59, 59, 999);
-          }
-
-          const [getSetting] = await database
-            .select()
-            .from(generalSettings)
-            .where(eq(generalSettings.settingCode, "ST-002"))
-            .limit(1);
-
-          if (getSetting.isActive === true) {
-            whereConditions.push(
-              gte(orders.createdAt, start),
-              lte(orders.createdAt, end),
-            );
-          } else {
-            whereConditions.push(
-              or(
-                and(
-                  gte(orders.updatedAt, start),
-                  lte(orders.updatedAt, end),
-                  or(
-                    eq(orders.status, "paid"),
-                    eq(orders.status, "completed"),
-                    eq(orders.status, "canceled"),
-                  ),
-                ),
-                and(
-                  gte(orders.createdAt, start),
-                  lte(orders.createdAt, end),
-                  eq(orders.status, "pending"),
-                ),
-              ),
-            );
-          }
-        }
-
-        // Use database query with proper TIMESTAMPTZ date filtering on createdAt field
-        let database = tenantDb || db;
-
-        let filteredOrders;
-
-        // Add store filter based on user permission
-        if (storeCode && storeCode !== "all") {
-          // User selected a specific store - filter by that store
-          whereConditions.push(eq(orders.storeCode, storeCode as string));
-          console.log(
-            `🔒 Date range - filtering by selected store: ${storeCode}`,
-          );
-        } else if (storeCode === "all" || !storeCode) {
-          // User selected "all" or no filter
-          if (!req.user?.isAdmin) {
-            // Non-admin user - filter by parent stores only
-            const userId = req.user?.userId;
-            if (userId) {
-              const [userStore] = await database
-                .select()
-                .from(storeSettings)
-                .where(eq(storeSettings.id, userId))
-                .limit(1);
-
-              if (userStore?.parent) {
-                const parentStoreCodes = userStore.parent
-                  .split(",")
-                  .map((code) => code.trim());
-                console.log(
-                  `🔒 Non-admin date range - filtering by parent stores: ${parentStoreCodes.join(", ")}`,
-                );
-                whereConditions.push(
-                  inArray(orders.storeCode, parentStoreCodes),
-                );
-              } else {
-                // No parent stores defined - return empty result
-                console.log(
-                  `🔒 Non-admin date range - no parent stores, returning empty`,
-                );
-                return res.json([]);
-              }
-            }
-          } else {
-            // Admin with "all" - no store filter, show all data
-            console.log(`🔓 Admin date range - no store filter applied`);
-          }
-        }
-
-        filteredOrders = await database
-          .select({
-            ...orders,
-          })
-          .from(orders)
-          .where(and(...whereConditions))
-          .orderBy(desc(orders.createdAt), desc(orders.id));
-
-        console.log("Orders by date range - Database filter results:", {
-          filteredCount: filteredOrders.length,
-          dateRange: `${startDate} to ${endDate}`,
+          queryUsed: `createdAt >= '${start.toISOString()}' AND createdAt <= '${end.toISOString()}'`,
           sampleFilteredOrder: filteredOrders[0]
             ? {
                 id: filteredOrders[0].id,
@@ -4328,148 +2252,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
-  // Get customers with filters and pagination
-  app.get(
-    "/api/customers",
-    tenantMiddleware,
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      // Disable cache for real-time data
-      res.set({
-        "Cache-Control": "no-store, no-cache, must-revalidate, private",
-        Pragma: "no-cache",
-        Expires: "0",
-      });
-
-      try {
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-        const {
-          search,
-          status,
-          storeFilter,
-          page = "1",
-          limit = "20",
-        } = req.query;
-
-        const pageNum = parseInt(page as string);
-        const limitNum = parseInt(limit as string);
-        const offset = (pageNum - 1) * limitNum;
-
-        console.log(
-          "🔍 GET /api/customers - Fetching customers with filters:",
-          {
-            search,
-            status,
-            storeFilter,
-            page: pageNum,
-            limit: limitNum,
-            isAdmin: req.user?.isAdmin,
-          },
-        );
-
-        // Build where conditions
-        const whereConditions = [];
-
-        // Filter by storeCode based on user permission
-        if (storeFilter && storeFilter !== "all") {
-          whereConditions.push(eq(customers.storeCode, storeFilter as string));
-        } else if (storeFilter === "all") {
-          if (!req.user?.isAdmin) {
-            // Non-admin with "all" - filter by parent stores
-            const userId = req.user?.userId;
-            if (userId) {
-              const [userStore] = await database
-                .select()
-                .from(storeSettings)
-                .where(eq(storeSettings.id, userId))
-                .limit(1);
-
-              if (userStore?.parent) {
-                const parentStoreCodes = userStore.parent
-                  .split(",")
-                  .map((code) => code.trim());
-                console.log(
-                  `🔒 Non-admin customers - filtering by parent stores: ${parentStoreCodes.join(", ")}`,
-                );
-                whereConditions.push(
-                  inArray(customers.storeCode, parentStoreCodes),
-                );
-              }
-            }
-          }
-        } else if (!req.user?.isAdmin && req.user?.storeCode) {
-          // Non-admin without filter - see their own store
-          whereConditions.push(eq(customers.storeCode, req.user.storeCode));
-        }
-
-        // Search filter
-        if (search && search !== "") {
-          const searchTerm = `%${search}%`;
-          whereConditions.push(
-            or(
-              ilike(customers.name, searchTerm),
-              ilike(customers.phone, searchTerm),
-              ilike(customers.customerId, searchTerm),
-              ilike(customers.email, searchTerm),
-            ),
-          );
-        }
-
-        // Status filter
-        if (status && status !== "all") {
-          whereConditions.push(eq(customers.status, status as string));
-        }
-
-        // Get total count
-        const [totalCountResult] = await database
-          .select({
-            count: count(),
-          })
-          .from(customers)
-          .where(
-            whereConditions.length > 0 ? and(...whereConditions) : undefined,
-          );
-
-        const totalCount = totalCountResult?.count || 0;
-        const totalPages = Math.ceil(totalCount / limitNum);
-
-        // Get paginated customers
-        const customersResult = await database
-          .select()
-          .from(customers)
-          .where(
-            whereConditions.length > 0 ? and(...whereConditions) : undefined,
-          )
-          .orderBy(desc(customers.createdAt))
-          .limit(limitNum)
-          .offset(offset);
-
-        console.log(
-          `✅ Successfully fetched ${customersResult.length} customers (page ${pageNum}/${totalPages})`,
-        );
-
-        res.json({
-          customers: customersResult,
-          pagination: {
-            currentPage: pageNum,
-            totalPages,
-            totalCount,
-            limit: limitNum,
-            hasNext: pageNum < totalPages,
-            hasPrev: pageNum > 1,
-          },
-        });
-      } catch (error) {
-        console.error("❌ Error fetching customers:", error);
-        res.status(500).json({
-          error: "Failed to fetch customers",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
-
   // Get next employee ID
   app.get("/api/employees/next-id", async (req: TenantRequest, res) => {
     try {
@@ -4509,100 +2291,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message: "Failed to generate purchase receipt number",
           error: error instanceof Error ? error.message : String(error),
         });
-      }
-    },
-  );
-
-  // Get next supplier code with NCC prefix
-  app.get(
-    "/api/suppliers/next-code",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        console.log("🔍 API: Getting next supplier code with NCC prefix");
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        // Import suppliers table
-        const { suppliers } = await import("../shared/schema");
-
-        // Default starting sequence
-        let nextSequence = 1;
-
-        try {
-          // Query for all supplier codes with NCC prefix
-          const allCodes = await database
-            .select({ code: suppliers.code })
-            .from(suppliers)
-            .where(like(suppliers.code, "NCC-%"))
-            .orderBy(desc(suppliers.code));
-
-          console.log("📋 Found supplier codes:", allCodes.length);
-
-          if (allCodes.length > 0) {
-            // Filter codes with NCC prefix and extract sequence numbers
-            const sequences: number[] = [];
-
-            for (const row of allCodes) {
-              // Skip if code is null, undefined, or not a string
-              if (!row.code || typeof row.code !== "string") {
-                continue;
-              }
-
-              // Check if code starts with NCC-
-              if (!row.code.startsWith("NCC-")) {
-                continue;
-              }
-
-              // Extract number part
-              const match = row.code.match(/^NCC-(\d+)$/);
-              if (match && match[1]) {
-                const num = parseInt(match[1], 10);
-                // Only add valid positive integers
-                if (Number.isInteger(num) && num > 0) {
-                  sequences.push(num);
-                }
-              }
-            }
-
-            console.log("📊 Valid NCC sequences found:", sequences);
-
-            // Find max sequence if we have any valid sequences
-            if (sequences.length > 0) {
-              const maxSequence = Math.max(...sequences);
-              nextSequence = maxSequence + 1;
-              console.log(
-                "📈 Max sequence:",
-                maxSequence,
-                "→ Next:",
-                nextSequence,
-              );
-            }
-          }
-        } catch (queryError) {
-          console.error(
-            "⚠️ Error querying suppliers, using default sequence:",
-            queryError,
-          );
-          // Keep nextSequence = 1 as fallback
-        }
-
-        // Final safety check
-        if (!Number.isInteger(nextSequence) || nextSequence < 1) {
-          console.warn("⚠️ Invalid nextSequence, resetting to 1");
-          nextSequence = 1;
-        }
-
-        // Format: NCC-0000001 (7 digits)
-        const formattedSequence = nextSequence.toString().padStart(7, "0");
-        const nextCode = `NCC-${formattedSequence}`;
-
-        console.log("✅ API: Generated next supplier code:", nextCode);
-        res.json({ code: nextCode });
-      } catch (error) {
-        console.error("❌ API: Failed to generate supplier code:", error);
-        // Return default code on error
-        res.json({ code: "NCC-0000001" });
       }
     },
   );
@@ -5009,7 +2697,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           tenantDb,
         );
 
-        console.log("t�� API: Purchase receipt items fetched:", items.length);
+        console.log("✅ API: Purchase receipt items fetched:", items.length);
         res.json(items);
       } catch (error) {
         console.error("❌ API: Failed to fetch purchase receipt items:", error);
@@ -5076,335 +2764,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
-  // Menu Analysis API - Add store filtering logic
-  app.get(
-    "/api/menu-analysis",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        const { startDate, endDate, categoryId, search, storeFilter } =
-          req.query;
-
-        console.log("🔍 Menu Analysis API called with params:", {
-          startDate,
-          endDate,
-          categoryId,
-          search,
-          storeFilter: storeFilter || "all",
-          isAdmin: req.user?.isAdmin,
-        });
-
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
-
-        // Date range filter - support yyyyMMdd format
-        let whereConditions = [];
-        if (startDate && endDate) {
-          let start: Date;
-          let end: Date;
-
-          if (
-            typeof startDate === "string" &&
-            startDate.length === 8 &&
-            /^\d{8}$/.test(startDate)
-          ) {
-            // Parse yyyyMMdd format
-            const year = parseInt(startDate.substring(0, 4));
-            const month = parseInt(startDate.substring(4, 6)) - 1; // Month is 0-indexed
-            const day = parseInt(startDate.substring(6, 8));
-            start = new Date(year, month, day, 0, 0, 0, 0);
-          } else {
-            // Parse standard date format
-            start = new Date(startDate as string);
-            start.setHours(0, 0, 0, 0);
-          }
-
-          if (
-            typeof endDate === "string" &&
-            endDate.length === 8 &&
-            /^\d{8}$/.test(endDate)
-          ) {
-            // Parse yyyyMMdd format
-            const year = parseInt(endDate.substring(0, 4));
-            const month = parseInt(endDate.substring(4, 6)) - 1; // Month is 0-indexed
-            const day = parseInt(endDate.substring(6, 8));
-            end = new Date(year, month, day, 23, 59, 59, 999);
-          } else {
-            // Parse standard date format
-            end = new Date(endDate as string);
-            end.setHours(23, 59, 59, 999);
-          }
-
-          const [getSetting] = await database
-            .select()
-            .from(generalSettings)
-            .where(eq(generalSettings.settingCode, "ST-002"))
-            .limit(1);
-
-          if (getSetting.isActive === true) {
-            whereConditions.push(
-              gte(orders.createdAt, start),
-              lte(orders.createdAt, end),
-            );
-          } else {
-            whereConditions.push(
-              gte(orders.updatedAt, start),
-              lte(orders.updatedAt, end),
-            );
-          }
-        }
-
-        // Build category conditions
-        let categoryConditions = [];
-        if (categoryId && categoryId !== "all") {
-          categoryConditions.push(
-            eq(products.categoryId, parseInt(categoryId as string)),
-          );
-        }
-
-        // Build search conditions
-        let searchConditions = [];
-        if (search && search !== "" && search !== "all") {
-          const searchTerm = `%${search}%`;
-          searchConditions.push(
-            or(
-              ilike(products.name, searchTerm),
-              ilike(products.sku, searchTerm),
-            ),
-          );
-        }
-
-        // Build store filter conditions based on user permission
-        let storeConditions = [];
-        if (storeFilter && storeFilter !== "all") {
-          storeConditions.push(eq(orders.storeCode, storeFilter as string));
-        } else if (storeFilter === "all") {
-          if (!req.user?.isAdmin) {
-            // Non-admin with "all" - filter by parent stores
-            const userId = req.user?.userId;
-            if (userId) {
-              const [userStore] = await database
-                .select()
-                .from(storeSettings)
-                .where(eq(storeSettings.id, userId))
-                .limit(1);
-
-              if (userStore?.parent) {
-                const parentStoreCodes = userStore.parent
-                  .split(",")
-                  .map((code) => code.trim());
-                console.log(
-                  `🔒 Non-admin menu analysis - filtering by parent stores: ${parentStoreCodes.join(", ")}`,
-                );
-                storeConditions.push(
-                  inArray(orders.storeCode, parentStoreCodes),
-                );
-              }
-            }
-          }
-          // Admin with "all" - no filter needed
-        }
-
-        // Get orders with items in the date range
-        const orderItems = await database
-          .select({
-            productId: orderItemsTable.productId,
-            productName: products.name,
-            productSku: products.sku,
-            categoryId: products.categoryId,
-            categoryName: categories.name,
-            unitPrice: orderItemsTable.unitPrice,
-            quantity: orderItemsTable.quantity,
-            total: orderItemsTable.total,
-            orderId: orderItemsTable.orderId,
-            orderDate: orders.orderedAt,
-            discount: orderItemsTable.discount,
-            orderStatus: orders.status,
-            priceIncludeTax: orders.priceIncludeTax,
-            tax: orderItemsTable.tax,
-          })
-          .from(orders)
-          .innerJoin(orderItemsTable, eq(orders.id, orderItemsTable.orderId))
-          .leftJoin(products, eq(orderItemsTable.productId, products.id))
-          .leftJoin(categories, eq(products.categoryId, categories.id))
-          .where(
-            and(
-              ...whereConditions,
-              or(eq(orders.status, "paid"), eq(orders.status, "completed")),
-              ...categoryConditions,
-              ...searchConditions,
-              ...storeConditions,
-            ),
-          )
-          .orderBy(desc(orders.createdAt));
-
-        // Group and aggregate data by product
-        const productMap = new Map();
-        const categoryMap = new Map();
-
-        orderItems.forEach((item) => {
-          const productId = item.productId;
-          const quantity = Number(item.quantity || 0);
-          const unitPrice = Number(item.unitPrice || 0);
-          const revenue = unitPrice * quantity;
-          const discount = Number(item.discount || 0);
-
-          // Use tax directly from orderItemsTable
-          const itemTax = Number(item.tax || 0);
-
-          console.log(`📊 Menu Analysis - Processing item:`, {
-            productId: item.productId,
-            productName: item.productName,
-            quantity,
-            unitPrice: item.unitPrice,
-            revenue,
-            discount,
-            itemTax,
-            priceIncludeTax: item.priceIncludeTax,
-          });
-
-          // Product stats
-          if (productMap.has(productId)) {
-            const existing = productMap.get(productId);
-            existing.totalQuantity += quantity;
-            existing.totalRevenue += revenue;
-            existing.totalDiscount += discount;
-            existing.totalTax = (existing.totalTax || 0) + itemTax;
-            existing.orderCount += 1;
-          } else {
-            productMap.set(productId, {
-              productId: item.productId,
-              productName: item.productName,
-              productSku: item.productSku,
-              categoryId: item.categoryId,
-              categoryName: item.categoryName,
-              unitPrice: item.unitPrice,
-              totalQuantity: quantity,
-              totalRevenue: revenue,
-              totalDiscount: discount,
-              totalTax: itemTax,
-              averagePrice: unitPrice,
-              orderCount: 1,
-            });
-          }
-
-          // Category stats
-          const categoryId = item.categoryId;
-          if (categoryId) {
-            if (categoryMap.has(categoryId)) {
-              const existing = categoryMap.get(categoryId);
-              existing.totalQuantity += quantity;
-              existing.totalRevenue += revenue;
-              existing.productCount = productMap.size;
-            } else {
-              categoryMap.set(categoryId, {
-                categoryId: item.categoryId,
-                categoryName: item.categoryName,
-                totalQuantity: quantity,
-                totalRevenue: revenue,
-                productCount: 1,
-              });
-            }
-          }
-        });
-
-        // Convert to arrays
-        const productStats = Array.from(productMap.values()).map((product) => ({
-          ...product,
-          averagePrice:
-            product.orderCount > 0
-              ? product.totalRevenue / product.totalQuantity
-              : 0,
-        }));
-
-        const categoryStats = Array.from(categoryMap.values());
-
-        // Calculate totals - FIXED: Add totalDiscount and totalTax calculation
-        const totalRevenue = productStats.reduce(
-          (sum, product) => sum + product.totalRevenue,
-          0,
-        );
-        const totalQuantity = productStats.reduce(
-          (sum, product) => sum + product.totalQuantity,
-          0,
-        );
-        const totalDiscount = productStats.reduce(
-          (sum, product) => sum + product.totalDiscount,
-          0,
-        );
-        const totalTax = productStats.reduce(
-          (sum, product) => sum + (product.totalTax || 0),
-          0,
-        );
-
-        // Calculate totalSalesRevenue (revenue after discount + tax if price doesn't include tax)
-        const totalSalesRevenue = totalRevenue - totalDiscount + totalTax;
-
-        console.log(`💰 Menu Analysis - Tax Calculation Summary:`, {
-          totalRevenue,
-          totalDiscount,
-          totalTax,
-          totalSalesRevenue,
-          calculation: `${totalRevenue} - ${totalDiscount} + ${totalTax} = ${totalSalesRevenue}`,
-        });
-
-        // Sort and get top products
-        const sortedByQuantity = [...productStats].sort(
-          (a, b) => b.totalQuantity - a.totalQuantity,
-        );
-        const topSellingProducts = sortedByQuantity.slice(0, 10);
-
-        const sortedByRevenue = [...productStats].sort(
-          (a, b) => b.totalRevenue - a.totalRevenue,
-        );
-        const topRevenueProducts = sortedByRevenue.slice(0, 10);
-
-        console.log(
-          `✅ Menu Analysis API - Found ${productStats.length} products, Total Revenue: ${totalRevenue}, Total Discount: ${totalDiscount}, Total Tax: ${totalTax}, Sales Revenue: ${totalSalesRevenue}`,
-        );
-
-        res.json({
-          totalRevenue,
-          totalDiscount,
-          totalTax,
-          totalSalesRevenue,
-          totalQuantity,
-          categoryStats,
-          productStats,
-          topSellingProducts,
-          topRevenueProducts,
-        });
-      } catch (error) {
-        console.error("❌ Menu Analysis API error:", error);
-        res.status(500).json({
-          error: "Failed to fetch menu analysis",
-          message: error instanceof Error ? error.message : String(error),
-          totalRevenue: 0,
-          totalDiscount: 0,
-          totalTax: 0,
-          totalSalesRevenue: 0,
-          totalQuantity: 0,
-          categoryStats: [],
-          productStats: [],
-          topSellingProducts: [],
-          topRevenueProducts: [],
-        });
-      }
-    },
-  );
-
   // Product Analysis API
   app.get(
-    "/api/product-analysis/:startDate/:endDate/:floor/:storeCode",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
+    "/api/product-analysis/:startDate/:endDate/:floor?",
+    async (req: TenantRequest, res) => {
       try {
-        const { startDate, endDate, floor, storeCode } = req.params;
-        let { categoryId, productType, productSearch, storeFilter } = req.query;
+        const { startDate, endDate, floor } = req.params;
+        const { categoryId, productType, productSearch } = req.query;
         const floorFilter = floor || "all";
-        if (!storeFilter) {
-          storeFilter = storeCode || "all";
-        }
 
         console.log("🔍 Product Analysis API called with params:", {
           startDate,
@@ -5413,8 +2780,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           categoryId,
           productType,
           productSearch,
-          storeFilter: storeFilter || "all",
-          isAdmin: req.user?.isAdmin,
         });
 
         const tenantDb = await getTenantDatabase(req);
@@ -5457,7 +2822,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
           const typeValue = typeMap[productType as keyof typeof typeMap];
           if (typeValue) {
-            typeConditions.push(eq(products.productType, typeValue));
+            typeConditions.push(eq(products.productType, value));
           }
         }
 
@@ -5470,55 +2835,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ilike(products.name, searchTerm),
               ilike(products.sku, searchTerm),
             ),
-          );
-        }
-
-        // Build store filter conditions based on user permission
-        let storeConditions = [];
-        if (storeFilter && storeFilter !== "all") {
-          storeConditions.push(eq(orders.storeCode, storeFilter as string));
-        } else if (storeFilter === "all") {
-          if (!req.user?.isAdmin) {
-            // Non-admin with "all" - filter by parent stores
-            const userId = req.user?.userId;
-            if (userId) {
-              const [userStore] = await database
-                .select()
-                .from(storeSettings)
-                .where(eq(storeSettings.id, userId))
-                .limit(1);
-
-              if (userStore?.parent) {
-                const parentStoreCodes = userStore.parent
-                  .split(",")
-                  .map((code) => code.trim());
-                console.log(
-                  `🔒 Non-admin analyzing products from parent stores: ${parentStoreCodes.join(", ")}`,
-                );
-                storeConditions.push(
-                  inArray(orders.storeCode, parentStoreCodes),
-                );
-              }
-            }
-          }
-          // Admin with "all" - no filter needed
-        }
-
-        let whereConditions = [];
-        const [getSetting] = await database
-          .select()
-          .from(generalSettings)
-          .where(eq(generalSettings.settingCode, "ST-002"))
-          .limit(1);
-        if (getSetting.isActive === true) {
-          whereConditions.push(
-            gte(orders.createdAt, start),
-            lte(orders.createdAt, end),
-          );
-        } else {
-          whereConditions.push(
-            gte(orders.updatedAt, start),
-            lte(orders.updatedAt, end),
           );
         }
 
@@ -5546,12 +2862,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .leftJoin(categories, eq(products.categoryId, categories.id))
           .where(
             and(
-              ...whereConditions,
+              gte(orders.createdAt, start),
+              lte(orders.createdAt, end),
               or(eq(orders.status, "paid"), eq(orders.status, "completed")),
               ...categoryConditions,
               ...typeConditions,
               ...searchConditions,
-              ...storeConditions,
             ),
           )
           .orderBy(desc(orders.createdAt));
@@ -5589,7 +2905,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ...categoryConditions,
                 ...typeConditions,
                 ...searchConditions,
-                ...storeConditions,
               ),
             )
             .orderBy(desc(orders.createdAt));
@@ -5602,18 +2917,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         orderItems.forEach((item) => {
           const productId = item.productId;
-          const quantity = parseFloat(item.quantity || 1);
+          const quantity = Number(item.quantity || 0);
+          const revenue = Number(item.unitPrice || 0) * quantity;
           const discount = Number(item.discount || 0);
-          const revenue = Number(item.unitPrice || 0) * quantity - discount;
 
           if (productMap.has(productId)) {
             const existing = productMap.get(productId);
             existing.totalQuantity += quantity;
-            existing.quantity += quantity;
             existing.totalRevenue += revenue;
-            existing.total += revenue;
             existing.discount += discount;
-            existing.totalDiscount += discount;
             existing.orderCount += 1;
           } else {
             productMap.set(productId, {
@@ -5624,9 +2936,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               categoryName: item.categoryName,
               productType: item.productType,
               unitPrice: item.unitPrice, // This is the pre-tax price
-              quantity: quantity,
-              total: Number(item.total || 0) + discount,
-              discount: discount,
+              quantity: item.quantity,
+              total: item.total,
+              discount: item.discount,
               totalQuantity: quantity,
               totalRevenue: revenue,
               totalDiscount: discount,
@@ -5711,263 +3023,246 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // Get Purchase Receipts
-  app.get(
-    "/api/purchase-receipts",
-    authMiddleware,
-    async (req: AuthRequest, res) => {
-      try {
-        console.log("🔍 API: Getting purchase receipts with query:", req.query);
-        const tenantDb = await getTenantDatabase(req);
-        const database = tenantDb || db;
+  app.get("/api/purchase-receipts", async (req: TenantRequest, res) => {
+    try {
+      console.log("🔍 API: Getting purchase receipts with query:", req.query);
+      const tenantDb = await getTenantDatabase(req);
 
-        const options = {
-          supplierId: req.query.supplierId
-            ? Number(req.query.supplierId)
-            : undefined,
-          status: req.query.status as string,
-          search: req.query.search as string,
-          supplierName: req.query.supplierName as string,
-          startDate: req.query.startDate as string,
-          endDate: req.query.endDate as string,
-          page: req.query.page ? Number(req.query.page) : 1,
-          limit: req.query.limit ? Number(req.query.limit) : undefined,
-          storeFilter: req.query.storeFilter as string,
-        };
+      const options = {
+        supplierId: req.query.supplierId
+          ? Number(req.query.supplierId)
+          : undefined,
+        status: req.query.status as string,
+        search: req.query.search as string,
+        supplierName: req.query.supplierName as string,
+        startDate: req.query.startDate as string,
+        endDate: req.query.endDate as string,
+        paymentMethod: req.query.paymentMethod as string,
+        page: req.query.page ? Number(req.query.page) : 1,
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+      };
 
-        // Handle store filtering based on admin status
-        let storeCodeFilter: string[] | undefined;
-        if (options.storeFilter === "all") {
-          if (!req.user?.isAdmin) {
-            // Non-admin with "all" - get parent stores
-            const userId = req.user?.userId;
-            if (userId) {
-              const [userStore] = await database
-                .select()
-                .from(storeSettings)
-                .where(eq(storeSettings.id, userId))
-                .limit(1);
+      const receipts = await storage.getPurchaseReceipts(options, tenantDb);
+      console.log("✅ API: Purchase receipts fetched:", receipts.length);
 
-              if (userStore?.parent) {
-                storeCodeFilter = userStore.parent
-                  .split(",")
-                  .map((code) => code.trim());
-                console.log(
-                  `🔒 Non-admin purchase receipts - filtering by parent stores: ${storeCodeFilter.join(", ")}`,
-                );
-              }
-            }
+      // Transform receipts to match C# class structure
+      let transformedReceipts = await Promise.all(
+        receipts.map(async (receipt) => {
+          // Get receipt items
+          const items = await storage.getPurchaseOrderItems(
+            receipt.id,
+            tenantDb,
+          );
+
+          // Get supplier details
+          const supplier = await storage.getSupplier(
+            receipt.supplierId,
+            tenantDb,
+          );
+
+          // Get employee details if available
+          let employee = null;
+          if (receipt.employeeId) {
+            employee = await storage.getEmployee(receipt.employeeId, tenantDb);
           }
-          // Admin with "all" - no filter
-        } else if (options.storeFilter) {
-          storeCodeFilter = [options.storeFilter];
-        }
 
-        const receipts = await storage.getPurchaseReceipts(
-          { ...options, storeCodeFilter },
-          tenantDb,
-        );
-        console.log("✅ API: Purchase receipts fetched:", receipts.length);
+          // Calculate summary statistics
+          const totalItems = items.length;
+          const totalQuantityOrdered = items.reduce(
+            (sum, item) => sum + item.quantity,
+            0,
+          );
+          const totalQuantityReceived = items.reduce(
+            (sum, item) => sum + (item.receivedQuantity || 0),
+            0,
+          );
+          const isFullyReceived =
+            totalQuantityOrdered > 0 &&
+            totalQuantityReceived >= totalQuantityOrdered;
+          const receivedPercentage =
+            totalQuantityOrdered > 0
+              ? Math.round((totalQuantityReceived / totalQuantityOrdered) * 100)
+              : 0;
 
-        // Transform receipts to match C# class structure
-        const transformedReceipts = await Promise.all(
-          receipts.map(async (receipt) => {
-            // Get receipt items
-            const items = await storage.getPurchaseOrderItems(
-              receipt.id,
-              tenantDb,
-            );
+          // Transform items with product details and receiving info
+          const transformedItems = await Promise.all(
+            items.map(async (item) => {
+              // Get current product details
+              let product = null;
+              let productDetail = {
+                currentName: item.productName,
+                currentPrice: parseFloat(item.unitPrice) || 0,
+                currentStock: 0,
+                isActive: false,
+                trackInventory: false,
+                priceChanged: false,
+                priceChangePercentage: 0,
+              };
 
-            // Get supplier details
-            const supplier = await storage.getSupplier(receipt.supplierId);
+              if (item.productId) {
+                try {
+                  product = await storage.getProduct(item.productId, tenantDb);
+                  if (product) {
+                    const originalPrice = parseFloat(item.unitPrice);
+                    const currentPrice = parseFloat(product.price);
+                    const priceChanged =
+                      Math.abs(originalPrice - currentPrice) > 0.01;
+                    const priceChangePercentage =
+                      originalPrice > 0
+                        ? ((currentPrice - originalPrice) / originalPrice) * 100
+                        : 0;
 
-            // Get employee details if available
-            let employee = null;
-            if (receipt.employeeId) {
-              employee = await storage.getEmployee(
-                receipt.employeeId,
-                tenantDb,
-              );
+                    productDetail = {
+                      currentName: product.name,
+                      currentPrice: currentPrice || 0,
+                      currentStock: product.stock || 0,
+                      isActive: product.isActive || false,
+                      trackInventory: product.trackInventory || false,
+                      priceChanged,
+                      priceChangePercentage:
+                        Math.round(priceChangePercentage * 100) / 100,
+                    };
+                  }
+                } catch (productError) {
+                  console.warn(
+                    `Could not fetch product ${item.productId}:`,
+                    productError,
+                  );
+                }
+              }
+
+              // Calculate receiving info
+              const receivedPercentage =
+                item.quantity > 0
+                  ? ((item.receivedQuantity || 0) / item.quantity) * 100
+                  : 0;
+              const isPartiallyReceived =
+                (item.receivedQuantity || 0) > 0 &&
+                (item.receivedQuantity || 0) < item.quantity;
+
+              return {
+                id: item.id,
+                productId: item.productId,
+                productName: item.productName,
+                sku: item.sku || "",
+                quantity: item.quantity,
+                receivedQuantity: item.receivedQuantity || 0,
+                unitPrice: item.unitPrice ? parseFloat(item.unitPrice) : 0,
+                total: item.total ? parseFloat(item.total) : 0,
+                taxRate: parseFloat(item.taxRate || "0"),
+                discountPercent: item.discountPercent
+                  ? parseFloat(item.discountPercent)
+                  : 0,
+                discountAmount: item.discountAmount
+                  ? parseFloat(item.discountAmount)
+                  : 0,
+                discount_percent: item.discountPercent
+                  ? parseFloat(item.discountPercent)
+                  : 0,
+                discount_amount: item.discountAmount
+                  ? parseFloat(item.discountAmount)
+                  : 0,
+                notes: item.notes || "",
+                product: productDetail,
+                receiving: {
+                  isPartiallyReceived,
+                  receivedPercentage:
+                    Math.round(receivedPercentage * 100) / 100,
+                },
+              };
+            }),
+          );
+
+          return {
+            id: receipt.id,
+            receiptNumber: receipt.receiptNumber,
+            purchaseType: receipt.purchaseType, // Add purchaseType field
+            status: receipt.status || "",
+            purchaseDate: receipt.purchaseDate || receipt.createdAt,
+            actualDeliveryDate: receipt.actualDeliveryDate || null,
+            subtotal: receipt.subtotal ? parseFloat(receipt.subtotal) : 0,
+            tax: receipt.tax ? parseFloat(receipt.tax) : 0,
+            total: receipt.total ? parseFloat(receipt.total) : 0,
+            notes: receipt.notes || "",
+            createdAt: receipt.createdAt,
+            updatedAt: receipt.updatedAt,
+            isPaid: receipt.isPaid || false,
+            paymentMethod: receipt.paymentMethod || "",
+            paymentAmount: receipt.paymentAmount
+              ? parseFloat(receipt.paymentAmount)
+              : 0,
+            supplier: supplier
+              ? {
+                  id: supplier.id,
+                  name: supplier.name,
+                  code: supplier.code,
+                  contactPerson: supplier.contactPerson || "",
+                  phone: supplier.phone || "",
+                  email: supplier.email || "",
+                  address: supplier.address || "",
+                  status: supplier.status || "",
+                }
+              : null,
+            employee: employee
+              ? {
+                  id: employee.id,
+                  name: employee.name,
+                }
+              : null,
+            summary: {
+              total_items: totalItems,
+              total_quantity_ordered: totalQuantityOrdered,
+              total_quantity_received: totalQuantityReceived,
+              is_fully_received: isFullyReceived,
+              received_percentage: receivedPercentage,
+            },
+            items: transformedItems,
+          };
+        }),
+      );
+
+      if (options.paymentMethod) {
+        const targetMethod = options.paymentMethod.toLowerCase();
+
+        transformedReceipts = transformedReceipts.filter((item) => {
+          if (!item.paymentMethod) return false;
+
+          try {
+            let method = "";
+
+            // Nếu là JSON string, parse ra object
+            if (item.paymentMethod.trim().startsWith("{")) {
+              const paymentObject = JSON.parse(item.paymentMethod);
+              method = paymentObject.method || "";
+            } else {
+              // Nếu chỉ là chuỗi đơn giản
+              method = item.paymentMethod;
             }
 
-            // Calculate summary statistics
-            const totalItems = items.length;
-            const totalQuantityOrdered = items.reduce(
-              (sum, item) => sum + item.quantity,
-              0,
-            );
-            const totalQuantityReceived = items.reduce(
-              (sum, item) => sum + (item.receivedQuantity || 0),
-              0,
-            );
-            const isFullyReceived =
-              totalQuantityOrdered > 0 &&
-              totalQuantityReceived >= totalQuantityOrdered;
-            const receivedPercentage =
-              totalQuantityOrdered > 0
-                ? Math.round(
-                    (totalQuantityReceived / totalQuantityOrdered) * 100,
-                  )
-                : 0;
-
-            // Transform items with product details and receiving info
-            const transformedItems = await Promise.all(
-              items.map(async (item) => {
-                // Get current product details
-                let product = null;
-                let productDetail = {
-                  currentName: item.productName,
-                  currentPrice: parseFloat(item.unitPrice) || 0,
-                  currentStock: 0,
-                  isActive: false,
-                  trackInventory: false,
-                  priceChanged: false,
-                  priceChangePercentage: 0,
-                };
-
-                if (item.productId) {
-                  try {
-                    product = await storage.getProduct(
-                      item.productId,
-                      tenantDb,
-                    );
-                    if (product) {
-                      const originalPrice = parseFloat(item.unitPrice);
-                      const currentPrice = parseFloat(product.price);
-                      const priceChanged =
-                        Math.abs(originalPrice - currentPrice) > 0.01;
-                      const priceChangePercentage =
-                        originalPrice > 0
-                          ? ((currentPrice - originalPrice) / originalPrice) *
-                            100
-                          : 0;
-
-                      productDetail = {
-                        currentName: product.name,
-                        currentPrice: currentPrice || 0,
-                        currentStock: product.stock || 0,
-                        isActive: product.isActive || false,
-                        trackInventory: product.trackInventory || false,
-                        priceChanged,
-                        priceChangePercentage:
-                          Math.round(priceChangePercentage * 100) / 100,
-                      };
-                    }
-                  } catch (productError) {
-                    console.warn(
-                      `Could not fetch product ${item.productId}:`,
-                      productError,
-                    );
-                  }
-                }
-
-                // Calculate receiving info
-                const receivedPercentage =
-                  item.quantity > 0
-                    ? ((item.receivedQuantity || 0) / item.quantity) * 100
-                    : 0;
-                const isPartiallyReceived =
-                  (item.receivedQuantity || 0) > 0 &&
-                  (item.receivedQuantity || 0) < item.quantity;
-
-                return {
-                  id: item.id,
-                  productId: item.productId,
-                  productName: item.productName,
-                  sku: item.sku || "",
-                  quantity: item.quantity,
-                  receivedQuantity: item.receivedQuantity || 0,
-                  unitPrice: item.unitPrice ? parseFloat(item.unitPrice) : 0,
-                  total: item.total ? parseFloat(item.total) : 0,
-                  taxRate: parseFloat(item.taxRate || "0"),
-                  discountPercent: item.discountPercent
-                    ? parseFloat(item.discountPercent)
-                    : 0,
-                  discountAmount: item.discountAmount
-                    ? parseFloat(item.discountAmount)
-                    : 0,
-                  discount_percent: item.discountPercent
-                    ? parseFloat(item.discountPercent)
-                    : 0,
-                  discount_amount: item.discountAmount
-                    ? parseFloat(item.discountAmount)
-                    : 0,
-                  notes: item.notes || "",
-                  product: productDetail,
-                  receiving: {
-                    isPartiallyReceived,
-                    receivedPercentage:
-                      Math.round(receivedPercentage * 100) / 100,
-                  },
-                };
-              }),
-            );
-
-            return {
-              id: receipt.id,
-              receiptNumber: receipt.receiptNumber,
-              purchaseType: receipt.purchaseType, // Add purchaseType field
-              status: receipt.status || "pending",
-              purchaseDate: receipt.purchaseDate || receipt.createdAt,
-              actualDeliveryDate: receipt.actualDeliveryDate || null,
-              subtotal: receipt.subtotal ? parseFloat(receipt.subtotal) : 0,
-              tax: receipt.tax ? parseFloat(receipt.tax) : 0,
-              total: receipt.total ? parseFloat(receipt.total) : 0,
-              notes: receipt.notes || "",
-              createdAt: receipt.createdAt,
-              storeCode: receipt.storeCode || "",
-              updatedAt: receipt.updatedAt,
-              isPaid: receipt.isPaid || false,
-              paymentMethod: receipt.paymentMethod || "cash",
-              paymentAmount: receipt.paymentAmount
-                ? parseFloat(receipt.paymentAmount)
-                : 0,
-              supplier: supplier
-                ? {
-                    id: supplier.id,
-                    name: supplier.name,
-                    code: supplier.code,
-                    contactPerson: supplier.contactPerson || "",
-                    phone: supplier.phone || "",
-                    email: supplier.email || "",
-                    address: supplier.address || "",
-                    status: supplier.status || "active",
-                  }
-                : null,
-              employee: employee
-                ? {
-                    id: employee.id,
-                    name: employee.name,
-                  }
-                : null,
-              summary: {
-                total_items: totalItems,
-                total_quantity_ordered: totalQuantityOrdered,
-                total_quantity_received: totalQuantityReceived,
-                is_fully_received: isFullyReceived,
-                received_percentage: receivedPercentage,
-              },
-              items: transformedItems,
-            };
-          }),
-        );
-
-        // Return in standardized format matching C# classes
-        res.json({
-          success: true,
-          message: "OK",
-          data: transformedReceipts,
-        });
-      } catch (error) {
-        console.error("❌ API: Failed to fetch purchase receipts:", error);
-        res.status(500).json({
-          success: false,
-          message: "Failed to fetch purchase receipts",
-          data: [],
-          error: error instanceof Error ? error.message : String(error),
+            return method.toLowerCase() === targetMethod;
+          } catch (err) {
+            console.warn("⚠️ Lỗi parse paymentMethod:", item.paymentMethod);
+            return false;
+          }
         });
       }
-    },
-  );
+
+      // Return in standardized format matching C# classes
+      res.json({
+        success: true,
+        message: "OK",
+        data: transformedReceipts,
+      });
+    } catch (error) {
+      console.error("❌ API: Failed to fetch purchase receipts:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch purchase receipts",
+        data: [],
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
 
   // Create Purchase Receipt
   app.post("/api/purchase-receipts", async (req: TenantRequest, res) => {
@@ -6722,7 +4017,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         console.log(
-          `g��� Filtered expense vouchers: ${vouchers.length} vouchers in date range ${startDate} to ${endDate}`,
+          `💰 Filtered expense vouchers: ${vouchers.length} vouchers in date range ${startDate} to ${endDate}`,
         );
       }
 
@@ -7095,14 +4390,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
         if (existingEmployee) {
           return res.status(400).json({
-            message: "Email đã tồn tại trong hệ thte�ng",
+            message: "Email đã tồn tại trong hệ thống",
             code: "DUPLICATE_EMAIL",
             field: "email",
           });
         }
       }
 
-      const employee = await storage.createEmployee(validatedData, tenantDb);
+      let employee = await storage.createEmployee(validatedData, tenantDb);
       res.status(201).json(employee);
     } catch (error) {
       console.log("error: ", error);
@@ -7114,6 +4409,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.status(500).json({
         message: "Failed to create employee",
+        errors: error,
       });
     }
   });
@@ -7189,13 +4485,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Attendance routes
   app.get("/api/attendance", async (req: TenantRequest, res) => {
-    // Disable cache for real-time data
-    res.set({
-      "Cache-Control": "no-store, no-cache, must-revalidate, private",
-      Pragma: "no-cache",
-      Expires: "0",
-    });
-
     try {
       const { date, startDate, endDate, employeeId } = req.query;
       const tenantDb = await getTenantDatabase(req);
@@ -7403,13 +4692,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Tables
   app.get("/api/tables", tenantMiddleware, async (req: TenantRequest, res) => {
-    // Disable cache for real-time data
-    res.set({
-      "Cache-Control": "no-store, no-cache, must-revalidate, private",
-      Pragma: "no-cache",
-      Expires: "0",
-    });
-
     try {
       console.log("🔍 GET /api/tables - Starting request processing");
       let tenantDb;
@@ -7531,13 +4813,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Orders
   app.get("/api/orders", async (req: TenantRequest, res) => {
-    // Disable cache for real-time data
-    res.set({
-      "Cache-Control": "no-store, no-cache, must-revalidate, private",
-      Pragma: "no-cache",
-      Expires: "0",
-    });
-
     try {
       console.log("🔍 GET /api/orders - Starting request processing");
       const { salesChannel } = req.query;
@@ -8965,17 +6240,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // Store Settings
-  app.get("/api/store-settings", authMiddleware, async (req, res) => {
+  app.get("/api/store-settings", async (req: TenantRequest, res) => {
     try {
       const tenantDb = await getTenantDatabase(req);
-      let idUser = req.user?.userId;
-      console.log("idUser: ", idUser);
-      let settings = await tenantDb
-        .select()
-        .from(storeSettings)
-        .where(eq(storeSettings.id, idUser))
-        .limit(1);
-      res.json(settings[0]);
+      const settings = await storage.getStoreSettings(tenantDb);
+      res.json(settings);
     } catch (error) {
       console.error("Error fetching store settings:", error);
       res.status(500).json({
@@ -9745,82 +7014,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Customer management routes - Added Here
-  app.get("/api/customers", authMiddleware, async (req, res) => {
-    try {
-      const { search, status } = req.query;
-      const tenantDb = await getTenantDatabase(req);
-      const storeCode = req.user?.storeCode;
+  app.get(
+    "/api/customers",
+    tenantMiddleware,
+    async (req: TenantRequest, res) => {
+      try {
+        console.log("🔍 GET /api/customers - Starting request processing");
+        let tenantDb;
+        try {
+          tenantDb = await getTenantDatabase(req);
+          console.log("✅ Tenant database connection obtained for customers");
+        } catch (dbError) {
+          console.error(
+            "❌ Failed to get tenant database for customers:",
+            dbError,
+          );
+          tenantDb = null;
+        }
 
-      console.log(
-        "Customers API called with search:",
-        search,
-        "status:",
-        status,
-      );
-
-      let customerFilter = [];
-
-      if (search && search !== "all") {
-        const searchTerm = search.toLowerCase();
-        customerFilter.push(
-          or(like(customers.name, `%${searchTerm}%`)),
-          or(like(customers.phone, `%${searchTerm}%`)),
-          or(like(customers.email, `%${searchTerm}%`)),
-          or(like(customers.customerId, `%${searchTerm}%`)),
-          or(like(customers.address, `%${searchTerm}%`)),
-        );
-      }
-
-      const selectSetting = await tenantDb
-        .select()
-        .from(generalSettings)
-        .where(eq(generalSettings.settingCode, "ST-001"));
-
-      if (selectSetting[0]?.isActive) {
-        customerFilter.push(eq(customers.storeCode, storeCode));
-      }
-
-      let result = await tenantDb
-        .select()
-        .from(customers)
-        .where(and(...customerFilter));
-
-      if (status && status !== "all") {
-        const now = new Date();
-        const thirtyDaysAgo = new Date(now);
-        thirtyDaysAgo.setDate(now.getDate() - 30);
-
-        result = result.filter((customer) => {
-          const totalSpent = Number(customer.totalSpent || 0);
-          const lastVisit = customer.lastVisit
-            ? new Date(customer.lastVisit)
-            : null;
-
-          switch (status) {
-            case "active":
-              return lastVisit && lastVisit >= thirtyDaysAgo;
-            case "inactive":
-              return !lastVisit || lastVisit < thirtyDaysAgo;
-            case "vip":
-              return totalSpent >= 500000;
-            case "new":
-              const joinDate = customer.createdAt
-                ? new Date(customer.createdAt)
-                : null;
-              return joinDate && joinDate >= thirtyDaysAgo;
-            default:
-              return true;
-          }
+        const customers = await storage.getCustomers(tenantDb);
+        console.log(`✅ Successfully fetched ${customers.length} customers`);
+        res.json(customers);
+      } catch (error) {
+        console.error("❌ Error fetching customers:", error);
+        res.status(500).json({
+          message: "Failed to fetch customers",
         });
       }
-
-      console.log(`Found ${result.length} customers after filtering`);
-      res.json(result);
-    } catch (error) {
-      console.error("Error in customers API:", error);
-      res.status(500).json({ error: "Failed to fetch customers data" });
-    }
-  });
+    },
+  );
 
   app.get("/api/customers/:id", async (req: TenantRequest, res) => {
     try {
@@ -10343,7 +7565,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/invoice-templates/active", async (req: TenantRequest, res) => {
     try {
       const tenantDb = await getTenantDatabase(req);
-      const activeTemplates = await storage.getActiveInvoiceTemplates();
+      const activeTemplates = await storage.getActiveInvoiceTemplates(tenantDb);
       res.json(activeTemplates);
     } catch (error) {
       console.error("Error fetching active invoice templates:", error);
@@ -10776,42 +7998,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Query order items with proper Drizzle ORM
-      const [getSetting] = await database
-        .select()
-        .from(generalSettings)
-        .where(eq(generalSettings.settingCode, "ST-002"))
-        .limit(1);
-
       const orderDateConditions = [];
       if (startDate && endDate) {
         const startDateTime = new Date(startDate as string);
         const endDateTime = new Date(endDate as string);
         endDateTime.setHours(23, 59, 59, 999);
-        if (getSetting.isActive === true) {
-          orderDateConditions.push(
-            gte(orders.createdAt, startDateTime),
-            lte(orders.createdAt, endDateTime),
-          );
-        } else {
-          orderDateConditions.push(
-            gte(orders.updatedAt, startDateTime),
-            lte(orders.updatedAt, endDateTime),
-          );
-        }
+        orderDateConditions.push(
+          gte(orders.orderedAt, startDateTime),
+          lte(orders.orderedAt, endDateTime),
+        );
       } else if (startDate) {
         const startDateTime = new Date(startDate as string);
-        if (getSetting.isActive === true) {
-          orderDateConditions.push(gte(orders.createdAt, startDateTime));
-        } else {
-          orderDateConditions.push(gte(orders.updatedAt, startDateTime));
-        }
+        orderDateConditions.push(gte(orders.orderedAt, startDateTime));
       } else if (endDate) {
         const endDateTime = new Date(endDate as string);
-        if (getSetting.isActive === true) {
-          orderDateConditions.push(lte(orders.createdAt, endDateTime));
-        } else {
-          orderDateConditions.push(lte(orders.updatedAt, endDateTime));
-        }
+        orderDateConditions.push(lte(orders.orderedAt, endDateTime));
       }
 
       let orderResults = [];
@@ -10966,7 +8167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req: TenantRequest, res) => {
       try {
         console.log(
-          "   � GET /api/printer-configs - Starting request processing",
+          "🔍 GET /api/printer-configs - Starting request processing",
         );
         let tenantDb;
         try {
@@ -11281,6 +8482,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               stock: parseInt(productData.stock) || 0,
               categoryId: parseInt(productData.categoryId),
               imageUrl: productData.imageUrl || null,
+              taxRateName: productData.taxRateName || "",
               taxRate: productData.taxRate
                 ? productData.taxRate.toString()
                 : "0.00",
@@ -11906,7 +9108,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Filter orders based on parameters with enhanced logic
         const filteredOrders = orders.filter((order) => {
-          const orderDate = new Date(order.orderedAt || order.createdAt);
+          const orderDate = new Date(order.createdAt);
           const start = new Date(startDate);
           const end = new Date(endDate);
           end.setHours(23, 59, 59, 999);
@@ -12165,7 +9367,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!taxCode) {
         return res.status(400).json({
           success: false,
-          message: "Mã số thuế không được a�ể trống",
+          message: "Mã số thuế không được để trống",
         });
       }
 
@@ -12615,6 +9817,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               stock: parseInt(productData.stock) || 0,
               categoryId: parseInt(productData.categoryId),
               imageUrl: productData.imageUrl || null,
+              taxRateName: productData.taxRateName || "",
               taxRate: productData.taxRate
                 ? productData.taxRate.toString()
                 : "0.00",
@@ -13240,7 +10443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Filter orders based on parameters with enhanced logic
         const filteredOrders = orders.filter((order) => {
-          const orderDate = new Date(order.orderedAt || order.createdAt);
+          const orderDate = new Date(order.createdAt);
           const start = new Date(startDate);
           const end = new Date(endDate);
           end.setHours(23, 59, 59, 999);
@@ -13406,6 +10609,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Error in products API:", error);
         res.status(500).json({
           error: "Failed to fetch products data",
+        });
+      }
+    },
+  );
+
+  app.get(
+    "/api/customers/:customerSearch?/:customerStatus?",
+    async (req: TenantRequest, res) => {
+      try {
+        const { customerSearch, customerStatus } = req.params;
+        const tenantDb = await getTenantDatabase(req);
+
+        console.log(
+          "Customers API called with search:",
+          customerSearch,
+          "status:",
+          customerStatus,
+        );
+
+        let customers = await storage.getCustomers(tenantDb);
+
+        // Filter by search if provided
+        if (
+          customerSearch &&
+          customerSearch !== "" &&
+          customerSearch !== "undefined" &&
+          customerSearch !== "all"
+        ) {
+          const searchTerm = customerSearch.toLowerCase();
+          customers = customers.filter(
+            (customer) =>
+              customer.name?.toLowerCase().includes(searchTerm) ||
+              customer.phone?.includes(customerSearch) ||
+              customer.email?.toLowerCase().includes(searchTerm) ||
+              customer.customerId?.toLowerCase().includes(searchTerm) ||
+              customer.address?.toLowerCase().includes(searchTerm),
+          );
+        }
+
+        // Filter by status if provided
+        if (
+          customerStatus &&
+          customerStatus !== "all" &&
+          customerStatus !== "undefined"
+        ) {
+          const now = new Date();
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+          customers = customers.filter((customer) => {
+            const totalSpent = Number(customer.totalSpent || 0);
+            const lastVisit = customer.lastVisit
+              ? new Date(customer.lastVisit)
+              : null;
+
+            switch (customerStatus) {
+              case "active":
+                return lastVisit && lastVisit >= thirtyDaysAgo;
+              case "inactive":
+                return !lastVisit || lastVisit < thirtyDaysAgo;
+              case "vip":
+                return totalSpent >= 500000; // VIP customers with total spent >= 500k VND
+              case "new":
+                const joinDate = customer.createdAt
+                  ? new Date(customer.createdAt)
+                  : null;
+                return joinDate && joinDate >= thirtyDaysAgo;
+              default:
+                return true;
+            }
+          });
+        }
+
+        console.log(`Found ${customers.length} customers after filtering`);
+        res.json(customers);
+      } catch (error) {
+        console.error("Error in customers API:", error);
+        res.status(500).json({
+          error: "Failed to fetch customers data",
         });
       }
     },
@@ -14495,7 +11777,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Filter orders based on parameters with enhanced logic
         const filteredOrders = orders.filter((order) => {
-          const orderDate = new Date(order.orderedAt || order.createdAt);
+          const orderDate = new Date(order.createdAt);
           const start = new Date(startDate);
           const end = new Date(endDate);
           end.setHours(23, 59, 59, 999);
@@ -15204,6 +12486,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               stock: parseInt(productData.stock) || 0,
               categoryId: parseInt(productData.categoryId),
               imageUrl: productData.imageUrl || null,
+              taxRateName: productData.taxRateName || "",
               taxRate: productData.taxRate
                 ? productData.taxRate.toString()
                 : "0.00",
@@ -15829,7 +13112,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Filter orders based on parameters with enhanced logic
         const filteredOrders = orders.filter((order) => {
-          const orderDate = new Date(order.orderedAt || order.createdAt);
+          const orderDate = new Date(order.createdAt);
           const start = new Date(startDate);
           const end = new Date(endDate);
           end.setHours(23, 59, 59, 999);
@@ -16538,6 +13821,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               stock: parseInt(productData.stock) || 0,
               categoryId: parseInt(productData.categoryId),
               imageUrl: productData.imageUrl || null,
+              taxRateName: productData.taxRateName || "",
               taxRate: productData.taxRate
                 ? productData.taxRate.toString()
                 : "0.00",
@@ -16602,7 +13886,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const employees = await storage.getEmployees(tenantDb);
-        console.log(` �� Successfully fetched ${employees.length} employees`);
+        console.log(`✅ Successfully fetched ${employees.length} employees`);
         res.json(employees);
       } catch (error) {
         console.error("❌ Error fetching employees:", error);
@@ -17163,7 +14447,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Filter orders based on parameters with enhanced logic
         const filteredOrders = orders.filter((order) => {
-          const orderDate = new Date(order.orderedAt || order.createdAt);
+          const orderDate = new Date(order.createdAt);
           const start = new Date(startDate);
           const end = new Date(endDate);
           end.setHours(23, 59, 59, 999);
@@ -17456,7 +14740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Tax code lookup error:", error);
       res.status(500).json({
         success: false,
-        message: "Có lỗi xảy ra khi tra cứu mã s  � thuế",
+        message: "Có lỗi xảy ra khi tra cứu mã số thuế",
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
@@ -17872,6 +15156,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               stock: parseInt(productData.stock) || 0,
               categoryId: parseInt(productData.categoryId),
               imageUrl: productData.imageUrl || null,
+              taxRateName: productData.taxRateName || "",
               taxRate: productData.taxRate
                 ? productData.taxRate.toString()
                 : "0.00",
@@ -18105,24 +15390,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
         }
 
-        let whereConditions = [];
-        const [getSetting] = await database
-          .select()
-          .from(generalSettings)
-          .where(eq(generalSettings.settingCode, "ST-002"))
-          .limit(1);
-        if (getSetting.isActive === true) {
-          whereConditions.push(
-            gte(orders.createdAt, start),
-            lte(orders.createdAt, end),
-          );
-        } else {
-          whereConditions.push(
-            gte(orders.updatedAt, start),
-            lte(orders.updatedAt, end),
-          );
-        }
-
         // Query order items with product details from completed/paid orders
         const productSalesData = await tenantDb
           .select({
@@ -18147,7 +15414,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .leftJoin(categories, eq(products.categoryId, categories.id))
           .where(
             and(
-              ...whereConditions,
               or(eq(orders.status, "paid"), eq(orders.status, "completed")),
               ...dateConditions,
               ...categoryConditions,
@@ -18164,13 +15430,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         productSalesData.forEach((item) => {
           let productId = item.productId;
-          let quantity = parseFloat(item.quantity || "1");
+          let quantity = Number(item.quantity || 0);
+          let revenue = 0;
           let discount = Number(item.discount || 0);
-          let unitPrice = Number(item.unitPrice || 0);
-          let revenue = unitPrice * quantity - discount;
 
           if (item.priceIncludesTax) {
             // If price includes tax, we need to calculate the pre-tax price
+            const unitPrice = Number(item.unitPrice || 0);
             const taxRate = Number(item.taxRate || 0);
             const preTaxPrice = unitPrice / (1 + taxRate / 100);
             const preTaxTotal = preTaxPrice * quantity;
@@ -18183,7 +15449,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             existing.quantity += quantity;
             existing.totalQuantity += quantity;
             existing.totalRevenue += revenue;
-            existing.total += revenue;
             existing.discount += discount;
             existing.totalDiscount += discount;
             existing.orderCount += 1;
@@ -18196,9 +15461,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               categoryName: item.categoryName,
               productType: item.productType,
               unitPrice: item.unitPrice, // This is the pre-tax price
-              quantity: quantity,
-              total: Number(item.total || 0),
-              discount: discount,
+              quantity: item.quantity,
+              total: item.total,
+              discount: item.discount,
               totalQuantity: quantity,
               totalRevenue: revenue,
               totalDiscount: discount,
@@ -18266,25 +15531,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     },
   );
-
-  app.get("/api/general-settings/:code", async (req: TenantRequest, res) => {
-    try {
-      const { code } = req.params;
-      const tenantDb = await getTenantDatabase(req);
-      const [setting] = await tenantDb
-        .select()
-        .from(generalSettings)
-        .where(eq(generalSettings.settingCode, code))
-        .limit(1);
-      res.json(setting);
-    } catch (error) {
-      console.error("Error in general settings API:", error);
-      res.status(500).json({
-        error: "Failed to fetch general settings data",
-        message: error.message,
-      });
-    }
-  });
 
   // // Enhanced API endpoints for sales chart report - using same data source as dashboard
   app.get(
@@ -18588,7 +15834,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Filter orders based on parameters with enhanced logic
         const filteredOrders = orders.filter((order) => {
-          const orderDate = new Date(order.orderedAt || order.createdAt);
+          const orderDate = new Date(order.createdAt);
           const start = new Date(startDate);
           const end = new Date(endDate);
           end.setHours(23, 59, 59, 999);

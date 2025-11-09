@@ -22,12 +22,6 @@ class TenantManager {
     // Load tenant configurations from environment or main database
     const tenantsConfig = [
       {
-        subdomain: "demo",
-        databaseUrl: process.env.EXTERNAL_DB_URL || process.env.DATABASE_URL!,
-        storeName: "Store 0 - Cửa hàng demo",
-        isActive: true,
-      },
-      {
         subdomain: "0318225421",
         databaseUrl: process.env.EXTERNAL_DB_URL || process.env.DATABASE_URL!,
         storeName: "Store 1 - Cửa hàng 0318225421",
@@ -43,6 +37,12 @@ class TenantManager {
         isActive: true,
       },
       {
+        subdomain: "demo",
+        databaseUrl: process.env.DATABASE_demo || process.env.EXTERNAL_DB_demo!,
+        storeName: "Store 0 - Cửa hàng demo",
+        isActive: true,
+      },
+      {
         subdomain: "hazkitchen",
         databaseUrl:
           process.env.DATABASE_hazkitchen ||
@@ -51,75 +51,36 @@ class TenantManager {
         isActive: true,
       },
       {
+        subdomain: "0318671828",
+        databaseUrl:
+          process.env.DATABASE_0318671828 ||
+          process.env.EXTERNAL_DB_0318671828 ||
+          process.env.DATABASE_URL!,
+        storeName: "Store 2 - Cửa hàng 0318671828",
+        isActive: true,
+      },
+      {
         subdomain: "0108670987-001",
         databaseUrl:
           process.env.DATABASE_0108670987 ||
           process.env.EXTERNAL_DB_0108670987!,
-        storeName: "Store 5 - Cửa hàng 0108670987-001",
+        storeName: "Store 5 - Cửa hàng 0108670987",
         isActive: true,
       },
       {
-        subdomain: "0108670987-002",
+        subdomain: "060088013201",
         databaseUrl:
-          process.env.DATABASE_0108670987 ||
-          process.env.EXTERNAL_DB_0108670987!,
-        storeName: "Store 5 - Cửa hàng 0108670987-002",
+          process.env.DATABASE_060088013201 ||
+          process.env.EXTERNAL_DB_060088013201!,
+        storeName: "Store 5 - Cửa hàng 060088013201",
         isActive: true,
       },
       {
-        subdomain: "0108670987-003",
+        subdomain: "036194019168",
         databaseUrl:
-          process.env.DATABASE_0108670987 ||
-          process.env.EXTERNAL_DB_0108670987!,
-        storeName: "Store 5 - Cửa hàng 0108670987-003",
-        isActive: true,
-      },
-      {
-        subdomain: "0108670987-004",
-        databaseUrl:
-          process.env.DATABASE_0108670987 ||
-          process.env.EXTERNAL_DB_0108670987!,
-        storeName: "Store 5 - Cửa hàng 0108670987-004",
-        isActive: true,
-      },
-      {
-        subdomain: "0108670987-005",
-        databaseUrl:
-          process.env.DATABASE_0108670987 ||
-          process.env.EXTERNAL_DB_0108670987!,
-        storeName: "Store 5 - Cửa hàng 0108670987-005",
-        isActive: true,
-      },
-      {
-        subdomain: "0108670987-006",
-        databaseUrl:
-          process.env.DATABASE_0108670987 ||
-          process.env.EXTERNAL_DB_0108670987!,
-        storeName: "Store 5 - Cửa hàng 0108670987-006",
-        isActive: true,
-      },
-      {
-        subdomain: "0108670987-007",
-        databaseUrl:
-          process.env.DATABASE_0108670987 ||
-          process.env.EXTERNAL_DB_0108670987!,
-        storeName: "Store 5 - Cửa hàng 0108670987-007",
-        isActive: true,
-      },
-      {
-        subdomain: "0108670987-008",
-        databaseUrl:
-          process.env.DATABASE_0108670987 ||
-          process.env.EXTERNAL_DB_0108670987!,
-        storeName: "Store 5 - Cửa hàng 0108670987-008",
-        isActive: true,
-      },
-      {
-        subdomain: "0108670987-admin",
-        databaseUrl:
-          process.env.DATABASE_0108670987 ||
-          process.env.EXTERNAL_DB_0108670987!,
-        storeName: "Store 5 - Cửa hàng 0108670987-008",
+          process.env.DATABASE_036194019168 ||
+          process.env.EXTERNAL_DB_036194019168!,
+        storeName: "Store 5 - Cửa hàng 036194019168",
         isActive: true,
       },
       // Add more tenants as needed

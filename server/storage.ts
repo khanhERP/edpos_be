@@ -716,7 +716,6 @@ interface StoreSettings {
   id: number;
   storeName: string;
   storeCode: string;
-  domain?: string; // Added domain field
   businessType: string;
   openTime: string;
   closeTime: string;
@@ -726,11 +725,6 @@ interface StoreSettings {
   goldThreshold?: string;
   vipThreshold?: string;
   priceIncludesTax?: boolean; // Added for clarity
-  userName?: string;
-  password?: string;
-  isAdmin?: boolean;
-  parent?: string;
-  typeUser?: number;
   createdAt: string;
   updatedAt: string;
   defaultFloor?: string; // Added for default floor
@@ -742,7 +736,6 @@ interface StoreSettings {
 interface InsertStoreSettings {
   storeName?: string;
   storeCode?: string;
-  domain?: string; // Added domain field
   businessType?: string;
   openTime?: string;
   closeTime?: string;
@@ -752,11 +745,6 @@ interface InsertStoreSettings {
   goldThreshold?: string;
   vipThreshold?: string;
   priceIncludesTax?: boolean; // Added for clarity
-  userName?: string;
-  password?: string;
-  isAdmin?: boolean;
-  parent?: string;
-  typeUser?: number;
   defaultFloor?: string; // Added for default floor
   defaultZone?: string; // Added for default zone
   floorPrefix?: string; // Added for floor prefix
@@ -1292,15 +1280,14 @@ export class DatabaseStorage implements IStorage {
     tenantDb?: any,
   ): Promise<Product[]> {
     try {
-      const database =
-        tenantDb || this.getSafeDatabase("getProductsByCategory");
+      const database = tenantDb;
       let whereCondition = eq(products.categoryId, categoryId);
 
       if (!includeInactive) {
         whereCondition = and(whereCondition, eq(products.isActive, true));
       }
 
-      const result = await database
+      const result = await tenantDb
         .select()
         .from(products)
         .where(whereCondition)
@@ -1320,7 +1307,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getProduct(id: number, tenantDb?: any): Promise<Product | undefined> {
-    const database = tenantDb || this.getSafeDatabase("getProduct");
+    const database = tenantDb;
     const [product] = await database
       .select()
       .from(products)
@@ -1336,7 +1323,7 @@ export class DatabaseStorage implements IStorage {
     sku: string,
     tenantDb?: any,
   ): Promise<Product | undefined> {
-    const database = tenantDb || this.getSafeDatabase("getProductBySku");
+    const database = tenantDb;
     const [product] = await database
       .select()
       .from(products)
@@ -1353,7 +1340,7 @@ export class DatabaseStorage implements IStorage {
     includeInactive: boolean = false,
     tenantDb?: any,
   ): Promise<Product[]> {
-    const database = tenantDb || this.getSafeDatabase("searchProducts");
+    const database = tenantDb;
     let whereCondition = or(
       ilike(products.name, `%${query}%`),
       ilike(products.sku, `%${query}%`),
@@ -1378,7 +1365,7 @@ export class DatabaseStorage implements IStorage {
     insertProduct: InsertProduct,
     tenantDb?: any,
   ): Promise<Product> {
-    const database = tenantDb || this.getSafeDatabase("createProduct");
+    const database = tenantDb;
     try {
       console.log("Storage: Creating product with data:", insertProduct);
       console.log(
@@ -1528,7 +1515,7 @@ export class DatabaseStorage implements IStorage {
     updateData: Partial<InsertProduct>,
     tenantDb?: any,
   ): Promise<Product | undefined> {
-    const database = tenantDb || this.getSafeDatabase("updateProduct");
+    const database = tenantDb;
     try {
       console.log("Updating product with data:", updateData);
       console.log(
@@ -1641,7 +1628,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteProduct(id: number, tenantDb?: any): Promise<boolean> {
-    const database = tenantDb || this.getSafeDatabase("deleteProduct");
+    const database = tenantDb;
     try {
       // Check if product exists in transactions
       const transactionItemsCheck = await database
@@ -1681,7 +1668,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteInactiveProducts(tenantDb?: any): Promise<number> {
-    const database = tenantDb || this.getSafeDatabase("deleteInactiveProducts");
+    const database = tenantDb;
     const result = await database
       .delete(products)
       .where(eq(products.isActive, false))
@@ -1694,7 +1681,7 @@ export class DatabaseStorage implements IStorage {
     quantity: number,
     tenantDb?: any,
   ): Promise<Product | undefined> {
-    const database = tenantDb || this.getSafeDatabase("updateProductStock");
+    const database = tenantDb;
 
     try {
       console.log(
@@ -1785,7 +1772,7 @@ export class DatabaseStorage implements IStorage {
     items: InsertTransactionItem[],
     tenantDb?: any,
   ): Promise<Receipt> {
-    const database = tenantDb || this.getSafeDatabase("createTransaction");
+    const database = tenantDb;
     console.log(`🔄 Creating transaction: ${insertTransaction.transactionId}`);
     console.log(`📦 Processing ${items.length} items for inventory deduction`);
     console.log(
@@ -1929,7 +1916,7 @@ export class DatabaseStorage implements IStorage {
     id: number,
     tenantDb?: any,
   ): Promise<Receipt | undefined> {
-    const database = tenantDb || this.getSafeDatabase("getTransaction");
+    const database = tenantDb;
     const [transaction] = await database
       .select()
       .from(transactions)
@@ -1949,8 +1936,7 @@ export class DatabaseStorage implements IStorage {
     transactionId: string,
     tenantDb?: any,
   ): Promise<Receipt | undefined> {
-    const database =
-      tenantDb || this.getSafeDatabase("getTransactionByTransactionId");
+    const database = tenantDb;
     const [transaction] = await database
       .select()
       .from(transactions)
@@ -1967,7 +1953,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTransactions(tenantDb?: any): Promise<Transaction[]> {
-    const database = tenantDb || this.getSafeDatabase("getTransactions");
+    const database = tenantDb;
     return await database
       .select()
       .from(transactions)
@@ -1976,7 +1962,7 @@ export class DatabaseStorage implements IStorage {
 
   // Get next employee ID in sequence
   async getNextEmployeeId(tenantDb?: any): Promise<string> {
-    const database = tenantDb || this.getSafeDatabase("getNextEmployeeId");
+    const database = tenantDb;
     try {
       const lastEmployee = await database
         .select()
@@ -2008,7 +1994,7 @@ export class DatabaseStorage implements IStorage {
 
   // Generate next customer ID
   async getNextCustomerId(tenantDb?: any): Promise<string> {
-    const database = tenantDb || this.getSafeDatabase("getNextCustomerId");
+    const database = tenantDb;
     try {
       // Get all customer IDs that match the CUST pattern and extract numbers
       const allCustomers = await database
@@ -2042,7 +2028,7 @@ export class DatabaseStorage implements IStorage {
 
   // Generate next category ID
   async getNextCategoryId(tenantDb?: any): Promise<string> {
-    const database = tenantDb || this.getSafeDatabase("getNextCategoryId");
+    const database = tenantDb;
     try {
       // Get all category IDs and extract numbers
       const allCategories = await database
@@ -2067,7 +2053,7 @@ export class DatabaseStorage implements IStorage {
 
   // Check if category ID exists
   async categoryIdExists(categoryId: string, tenantDb?: any): Promise<boolean> {
-    const database = tenantDb || this.getSafeDatabase("categoryIdExists");
+    const database = tenantDb;
     try {
       const [existing] = await database
         .select()
@@ -2120,11 +2106,58 @@ export class DatabaseStorage implements IStorage {
     tenantDb?: any,
   ): Promise<Employee> {
     const database = tenantDb || this.getSafeDatabase("createEmployee");
-    const [employee] = await database
-      .insert(employees)
-      .values(insertEmployee)
-      .returning();
-    return employee;
+
+    try {
+      const [employee] = await database
+        .insert(employees)
+        .values(insertEmployee)
+        .returning();
+      return employee;
+    } catch (error: any) {
+      console.error("Storage: Error creating employee:", error);
+      console.error("Storage: Error code:", error?.code);
+      console.error("Storage: Error constraint:", error?.constraint);
+
+      // Handle duplicate key error by fixing sequence
+      if (error?.code === "23505" && error?.constraint === "employees_pkey") {
+        console.log(
+          "🔧 Fixing employees sequence due to duplicate key error...",
+        );
+        try {
+          // Get max ID from employees table
+          const maxIdResult = await database.execute(
+            sql`SELECT COALESCE(MAX(id), 0) as max_id FROM employees`,
+          );
+          const maxId = parseInt(maxIdResult.rows[0]?.max_id) || 0;
+          const newSeqValue = maxId + 1; // Set sequence to next available ID
+
+          console.log(
+            `📊 Current max ID: ${maxId}, setting sequence to: ${newSeqValue}`,
+          );
+
+          // Reset sequence to correct value
+          await database.execute(
+            sql`SELECT setval('employees_id_seq', ${newSeqValue}, false)`,
+          );
+          console.log(`✅ Employees sequence reset to ${newSeqValue}`);
+
+          // Retry the insert - this will use the next sequence value
+          console.log("🔄 Retrying employee creation...");
+          const [employee] = await database
+            .insert(employees)
+            .values(insertEmployee)
+            .returning();
+
+          console.log("✅ Employee created successfully on retry:", employee);
+          return employee;
+        } catch (retryError) {
+          console.error("❌ Failed to fix sequence and retry:", retryError);
+          throw new Error("Không thể tạo nhân viên. Vui lòng thử lại.");
+        }
+      }
+
+      throw new Error("Không thể tạo nhân viên. Vui lòng thử lại.");
+    }
   }
 
   async updateEmployee(
@@ -2835,6 +2868,7 @@ export class DatabaseStorage implements IStorage {
         orderData.paidAt !== undefined
           ? orderData.paidAt
           : existingOrder.paidAt,
+      updatedAt: new Date(),
     };
 
     console.log("🔍 Storage: Final update data analysis:", {
@@ -4139,7 +4173,7 @@ export class DatabaseStorage implements IStorage {
       const templates = await database
         .select()
         .from(invoiceTemplates)
-        .where(eq(invoiceTemplates.isDefault, true))
+        .where(eq(invoiceTemplates.isActive, true))
         .orderBy(desc(invoiceTemplates.id));
       return templates;
     } catch (error) {
@@ -5177,7 +5211,6 @@ export class DatabaseStorage implements IStorage {
       endDate?: string;
       page?: number;
       limit?: number;
-      storeFilter?: string[];
     } = {},
     tenantDb?: any,
   ): Promise<PurchaseReceipt[]> {
@@ -5196,7 +5229,6 @@ export class DatabaseStorage implements IStorage {
         endDate,
         page = 1,
         limit,
-        storeFilter,
       } = options;
 
       if (supplierId) {
@@ -5214,10 +5246,6 @@ export class DatabaseStorage implements IStorage {
             ilike(purchaseReceipts.notes, `%${search}%`),
           ),
         );
-      }
-
-      if (storeFilter && storeFilter.length > 0) {
-        conditions.push(inArray(purchaseReceipts.storeCode, storeFilter));
       }
 
       if (startDate && endDate) {
@@ -5295,7 +5323,6 @@ export class DatabaseStorage implements IStorage {
           isPaid: purchaseReceipts.isPaid, // Include isPaid
           paymentMethod: purchaseReceipts.paymentMethod,
           paymentAmount: purchaseReceipts.paymentAmount,
-          storeCode: purchaseReceipts.storeCode,
         })
         .from(purchaseReceipts)
         .leftJoin(suppliers, eq(purchaseReceipts.supplierId, suppliers.id))

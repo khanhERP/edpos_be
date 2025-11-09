@@ -2,6 +2,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 // import { setupVite, serveStatic, log } from "./vite";
+import { setupWebSocket } from "./websocket-server";
 
 const app = express();
 
@@ -18,9 +19,8 @@ app.use((req, res, next) => {
     "https://0111156080.edpos.vn",
     "https://hazkitchen.edpos.vn",
     "https://0318225421.edpos.vn",
-    "https://0108670987-001.edpos.vn",
+    "http://0108670987-001.edpos.vn",
     "https://0318671828.edpos.vn",
-    "https://0108670987-admin.edpos.vn",
     "https://64071157-147f-4160-96cd-6dc099d777d2-00-1d0mzv8b48h7n.pike.replit.dev",
     "https://bad07204-3e0d-445f-a72e-497c63c9083a-00-3i4fcyhnilzoc.pike.replit.dev",
     "https://64071157-147f-4160-96cd-6dc099d777d2-00-1d0mzv8b48h7n.pike.replit.dev",
@@ -82,8 +82,9 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+// Configure body parser with increased size limit for image uploads
+app.use(express.json({ limit: "100mb" }));
+app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 app.use((req, res, next) => {
   const start = Date.now();

@@ -20,14 +20,13 @@ export const categories = pgTable("categories", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   icon: text("icon").notNull(),
-  storeCode: varchar("store_code", { length: 50 }),
 });
 
 export const products = pgTable("products", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   sku: text("sku").notNull().unique(),
-  price: decimal("price", { precision: 10, scale: 2 }).notNull(),
+  price: decimal("price", { precision: 18, scale: 2 }).notNull(),
   stock: integer("stock").notNull().default(0),
   categoryId: integer("category_id")
     .references(() => categories.id)
@@ -41,12 +40,11 @@ export const products = pgTable("products", {
     .default("0.00"),
   taxRateName: text("tax_rate_name"), // Stores display name like "KCT", "KKKNT", "0%", "8%"
   priceIncludesTax: boolean("price_includes_tax").notNull().default(false),
-  afterTaxPrice: decimal("after_tax_price", { precision: 10, scale: 2 }),
+  afterTaxPrice: decimal("after_tax_price", { precision: 18, scale: 2 }),
   beforeTaxPrice: decimal("before_tax_price", { precision: 18, scale: 2 }),
   floor: varchar("floor", { length: 50 }).default("1"),
   zone: varchar("zone", { length: 50 }).default("A"),
   unit: text("unit").default("Cái"),
-  storeCode: varchar("store_code", { length: 50 }),
 });
 
 export const transactions = pgTable("transactions", {
@@ -62,7 +60,6 @@ export const transactions = pgTable("transactions", {
   notes: text("notes"),
   invoiceId: integer("invoice_id").references(() => invoices.id),
   invoiceNumber: varchar("invoice_number", { length: 50 }),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -80,7 +77,6 @@ export const transactionItems = pgTable("transaction_items", {
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   quantity: integer("quantity").notNull(),
   total: decimal("total", { precision: 10, scale: 2 }).notNull(),
-  storeCode: varchar("store_code", { length: 50 }),
 });
 
 export const employees = pgTable("employees", {
@@ -97,7 +93,6 @@ export const employees = pgTable("employees", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
-  storeCode: varchar("store_code", { length: 50 }),
 });
 
 export const attendanceRecords = pgTable("attendance_records", {
@@ -113,7 +108,6 @@ export const attendanceRecords = pgTable("attendance_records", {
   overtime: decimal("overtime", { precision: 4, scale: 2 }).default("0.00"),
   status: text("status").notNull().default("present"), // "present", "absent", "late", "half_day"
   notes: text("notes"),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -123,16 +117,9 @@ export const storeSettings = pgTable("store_settings", {
   id: serial("id").primaryKey(),
   storeName: text("store_name").notNull().default("EDPOS 레스토랑"),
   storeCode: text("store_code"),
-  domain: text("domain"), // Added domain field
   taxId: text("tax_id"),
-  priceListId: integer("price_list_id").references(() => priceLists.id),
   businessType: text("business_type").default("restaurant"),
   pinCode: text("pin_code"),
-  userName: text("user_name"),
-  password: text("password"),
-  isAdmin: boolean("is_admin").default(false),
-  parent: text("parent"),
-  typeUser: integer("type_user").default(0),
   address: text("address"),
   phone: text("phone"),
   email: text("email"),
@@ -145,8 +132,6 @@ export const storeSettings = pgTable("store_settings", {
   defaultZone: text("default_zone").default("A"),
   floorPrefix: text("floor_prefix").default("층"),
   zonePrefix: text("zone_prefix").default("구역"),
-  isEdit: boolean("is_edit").notNull().default(false),
-  isCancelled: boolean("is_cancelled").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
@@ -164,7 +149,6 @@ export const suppliers = pgTable("suppliers", {
   paymentTerms: text("payment_terms").default("30일"), // "30일", "60일", "현금" 등
   status: text("status").notNull().default("active"), // "active", "inactive"
   notes: text("notes"),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -194,7 +178,6 @@ export const purchaseReceipts = pgTable("purchase_receipts", {
   paymentMethod: text("payment_method"),
   paymentAmount: decimal("payment_amount", { precision: 18, scale: 2 }),
   notes: text("notes"),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -224,7 +207,6 @@ export const purchaseReceiptItems = pgTable("purchase_receipt_items", {
   }).default("0.00"),
   rowOrder: integer("row_order").default(0),
   notes: text("notes"),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -243,7 +225,6 @@ export const purchaseReceiptDocuments = pgTable("purchase_receipt_documents", {
   filePath: text("file_path").notNull(),
   description: text("description"),
   uploadedBy: integer("uploaded_by").references(() => employees.id),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -257,7 +238,6 @@ export const tables = pgTable("tables", {
   floor: varchar("floor", { length: 50 }).default("1"), // Added floor field
   zone: varchar("zone", { length: 50 }).default("A"), // Added zone field
   qrCode: text("qr_code"),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -268,7 +248,6 @@ export const orders = pgTable("orders", {
   orderNumber: text("order_number").notNull().unique(),
   tableId: integer("table_id").references(() => tables.id),
   employeeId: integer("employee_id").references(() => employees.id),
-  customerId: integer("customer_id").references(() => customers.id), // Add customerId field
   status: text("status").notNull().default("pending"), // "pending", "confirmed", "preparing", "ready", "served", "paid", "cancelled"
   customerName: text("customer_name"),
   customerPhone: text("customer_phone"), // Add customer phone field
@@ -290,7 +269,6 @@ export const orders = pgTable("orders", {
   salesChannel: text("sales_channel").notNull().default("table"), // "table", "pos", "online", "delivery"
   priceIncludeTax: boolean("price_include_tax").notNull().default(false),
   notes: text("notes"),
-  storeCode: varchar("store_code", { length: 50 }),
   orderedAt: timestamp("ordered_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -312,7 +290,7 @@ export const orderItems = pgTable("order_items", {
   productId: integer("product_id")
     .references(() => products.id)
     .notNull(),
-  quantity: numeric("quantity", { precision: 8, scale: 4 }).notNull(),
+  quantity: integer("quantity").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
   total: decimal("total", { precision: 10, scale: 2 }).notNull(),
   discount: decimal("discount", { precision: 10, scale: 2 })
@@ -323,7 +301,6 @@ export const orderItems = pgTable("order_items", {
     .notNull()
     .default("0.00"),
   notes: text("notes"), // special requests
-  storeCode: varchar("store_code", { length: 50 }),
 });
 
 export const insertCategorySchema = createInsertSchema(categories).omit({
@@ -335,19 +312,23 @@ export const insertProductSchema = createInsertSchema(products)
     id: true,
   })
   .extend({
-    price: z
-      .union([z.string(), z.number()])
-      .refine(
-        (val) => {
-          const numVal =
-            typeof val === "string" ? parseFloat(val) : Number(val);
-          return !isNaN(numVal) && numVal >= 0 && numVal < 100000000;
-        },
-        {
-          message: "Price must be a non-negative number less than 100,000,000",
-        },
-      )
-      .default("0"),
+    price: z.union([z.string(), z.number()]).refine(
+      (val) => {
+        if (!val || val === null || val === undefined) return true;
+        const numVal = typeof val === "string" ? parseFloat(val) : val;
+        // Allow 0 and above - explicitly allow 0
+        if (isNaN(numVal) || numVal < 0) {
+          return false;
+        }
+        if (numVal >= 100000000000) {
+          return false;
+        }
+        return true;
+      },
+      {
+        message: "Price must be a valid number (0 or greater) and less than 100,000,000,000",
+      },
+    ),
     stock: z.number().min(0, "Stock cannot be negative"),
     productType: z.number().min(1).max(4, "Product type is required"),
     taxRate: z.union([z.string(), z.number()]).transform((val) => {
@@ -359,7 +340,11 @@ export const insertProductSchema = createInsertSchema(products)
       // Accept integer percentage values: 0, 5, 8, 10
       const numVal = typeof val === "string" ? parseFloat(val) : val;
 
-      if (isNaN(numVal) || numVal < 0 || numVal > 100) {
+      if (isNaN(numVal)) {
+        throw new Error("Tax rate must be a valid number");
+      }
+
+      if (numVal < 0 || numVal > 100) {
         throw new Error("Tax rate must be between 0 and 100");
       }
 
@@ -382,7 +367,7 @@ export const insertProductSchema = createInsertSchema(products)
           return !isNaN(numVal) && numVal >= 0;
         },
         {
-          message: "After tax price must be a non-negative number",
+          message: "After tax price must be a valid number (0 or greater)",
         },
       ),
     beforeTaxPrice: z
@@ -472,7 +457,6 @@ export const insertOrderSchema = createInsertSchema(orders)
   })
   .extend({
     tableId: z.number().nullable().optional(),
-    customerId: z.number().nullable().optional(), // Added customerId to InsertOrder schema
     status: z.enum(
       [
         "pending",
@@ -524,13 +508,10 @@ export const insertStoreSettingsSchema = createInsertSchema(storeSettings)
     createdAt: true,
   })
   .extend({
-    domain: z.string().optional(), // Added domain to schema
     priceIncludesTax: z.boolean().optional().default(false),
     defaultFloor: z.string().optional().default("1"),
     enableMultiFloor: z.boolean().optional().default(false),
     floorPrefix: z.string().optional().default("층"),
-    isEdit: z.boolean().optional().default(false),
-    isCancelled: z.boolean().optional().default(false),
   });
 
 export const insertSupplierSchema = createInsertSchema(suppliers)
@@ -633,12 +614,10 @@ export const customers = pgTable("customers", {
   taxCode: text("tax_code"),
   points: integer("points").default(0),
   membershipTier: text("membership_tier").default("bronze"),
-  membershipLevel: text("membership_level").default("BRONZE"), // 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM'
   totalSpent: decimal("total_spent", { precision: 12, scale: 2 }).default("0"),
   lastVisit: text("last_visit"),
   notes: text("notes"),
   status: text("status").notNull().default("active"),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -660,7 +639,6 @@ export const pointTransactions = pgTable("point_transactions", {
   employeeId: integer("employee_id").references(() => employees.id), // who processed the transaction
   previousBalance: integer("previous_balance").notNull(),
   newBalance: integer("new_balance").notNull(),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -709,7 +687,6 @@ export const inventoryTransactions = pgTable("inventory_transactions", {
   notes: text("notes"),
   invoiceId: integer("invoice_id"),
   invoiceNumber: varchar("invoice_number", { length: 50 }),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: varchar("created_at", { length: 50 }).notNull(),
 });
 
@@ -734,7 +711,6 @@ export const invoices = pgTable("invoices", {
   einvoiceStatus: integer("einvoice_status").notNull().default(0), // 0=Chưa phát hành, 1=Đã phát hành, 2=Tạo nháp, 3=Đã duyệt, 4=Đã bị thay thế (hủy), 5=Thay thế tạm, 6=Thay thế, 7=Đã bị điều chỉnh, 8=Điều chỉnh tạm, 9=Điều chỉnh, 10=Đã hủy
   invoiceStatus: integer("invoice_status").notNull().default(1), // 1=Hoàn thành, 2=Đang phục vụ, 3=Đã hủy
   notes: text("notes"),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -758,7 +734,6 @@ export const invoiceItems = pgTable("invoice_items", {
   taxRate: decimal("tax_rate", { precision: 5, scale: 2 })
     .notNull()
     .default("0.00"),
-  storeCode: varchar("store_code", { length: 50 }),
 });
 
 export const eInvoiceConnections = pgTable("einvoice_connections", {
@@ -776,7 +751,7 @@ export const eInvoiceConnections = pgTable("einvoice_connections", {
   notes: text("notes"),
   isDefault: boolean("is_default").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
-  storeCode: varchar("store_code", { length: 50 }),
+  autoPublish: boolean("auto_publish").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -805,7 +780,6 @@ export const printerConfigs = pgTable("printer_configs", {
   copies: integer("copies").notNull().default(0),
   floor: varchar("floor", { length: 50 }).default("1"),
   zone: varchar("zone", { length: 50 }).default("A"),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -824,7 +798,6 @@ export const invoiceTemplates = pgTable("invoice_templates", {
   notes: text("notes"),
   isDefault: boolean("is_default").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -930,7 +903,7 @@ export type CartItem = {
   id: number;
   name: string;
   price: string;
-  quantity: number; // Supports decimal values up to 4 decimal places
+  quantity: number;
   total: string;
   imageUrl?: string;
   stock: number;
@@ -997,10 +970,6 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
     fields: [orders.employeeId],
     references: [employees.id],
   }),
-  customer: one(customers, {
-    fields: [orders.customerId],
-    references: [customers.id],
-  }),
   items: many(orderItems),
 }));
 
@@ -1015,44 +984,8 @@ export const orderItemsRelations = relations(orderItems, ({ one }) => ({
   }),
 }));
 
-export const orderChangeHistory = pgTable("order_change_history", {
-  id: serial("id").primaryKey(),
-  orderId: integer("order_id")
-    .notNull()
-    .references(() => orders.id, { onDelete: "cascade" }),
-  changedAt: timestamp("changed_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  ipAddress: varchar("ip_address", { length: 45 }).notNull(), // IPv4 or IPv6
-  userId: integer("user_id"), // Employee or user ID
-  userName: varchar("user_name", { length: 255 }).notNull(),
-  action: varchar("action", { length: 50 }).notNull().default("edit"), // 'edit', 'create', 'delete', 'cancel'
-  detailedDescription: text("detailed_description").notNull(), // JSON string with change details
-  storeCode: varchar("store_code", { length: 50 }),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
-
-export const insertOrderChangeHistorySchema = createInsertSchema(
-  orderChangeHistory,
-)
-  .omit({
-    id: true,
-    createdAt: true,
-  })
-  .extend({
-    action: z.enum(["edit", "create", "delete", "cancel"]).default("edit"),
-  });
-
-export type OrderChangeHistory = typeof orderChangeHistory.$inferSelect;
-export type InsertOrderChangeHistory = z.infer<
-  typeof insertOrderChangeHistorySchema
->;
-
 export const customersRelations = relations(customers, ({ many }) => ({
   pointTransactions: many(pointTransactions),
-  orders: many(orders),
 }));
 
 export const pointTransactionsRelations = relations(
@@ -1173,7 +1106,6 @@ export const incomeVouchers = pgTable("income_vouchers", {
   phone: varchar("phone", { length: 20 }),
   category: varchar("category", { length: 50 }).notNull(),
   description: text("description"),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1191,7 +1123,6 @@ export const expenseVouchers = pgTable("expense_vouchers", {
   category: varchar("category", { length: 50 }).notNull(),
   description: text("description"),
   supplierId: integer("supplier_id").references(() => suppliers.id),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
@@ -1206,7 +1137,6 @@ export const paymentMethods = pgTable("payment_methods", {
   enabled: boolean("enabled").notNull().default(true),
   sortOrder: integer("sort_order").default(0),
   isSystem: boolean("is_system").notNull().default(false),
-  storeCode: varchar("store_code", { length: 50 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1216,118 +1146,3 @@ export type InsertIncomeVoucher = typeof incomeVouchers.$inferInsert;
 
 export type PaymentMethod = typeof paymentMethods.$inferSelect;
 export type InsertPaymentMethod = typeof paymentMethods.$inferInsert;
-
-// Price Lists table
-export const priceLists = pgTable("price_lists", {
-  id: serial("id").primaryKey(),
-  code: varchar("code", { length: 50 }).notNull().unique(),
-  name: varchar("name", { length: 255 }).notNull(),
-  description: text("description"),
-  isActive: boolean("is_active").notNull().default(true),
-  isDefault: boolean("is_default").notNull().default(false),
-  validFrom: timestamp("valid_from", { withTimezone: true }),
-  validTo: timestamp("valid_to", { withTimezone: true }),
-  storeCode: varchar("store_code", { length: 50 }),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
-
-// Price List Items table
-export const priceListItems = pgTable("price_list_items", {
-  id: serial("id").primaryKey(),
-  priceListId: integer("price_list_id")
-    .references(() => priceLists.id, { onDelete: "cascade" })
-    .notNull(),
-  productId: integer("product_id")
-    .references(() => products.id, { onDelete: "cascade" })
-    .notNull(),
-  price: decimal("price", { precision: 10, scale: 2 }).notNull(),
-  storeCode: varchar("store_code", { length: 50 }),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
-
-export const insertPriceListSchema = createInsertSchema(priceLists)
-  .omit({
-    id: true,
-    createdAt: true,
-    updatedAt: true,
-  })
-  .extend({
-    code: z.string().min(1, "Mã bảng giá là bắt buộc"),
-    name: z.string().min(1, "Tên bảng giá là bắt buộc"),
-    isActive: z.boolean().optional().default(true),
-    isDefault: z.boolean().optional().default(false),
-    validFrom: z
-      .union([z.string(), z.date()])
-      .optional()
-      .nullable()
-      .transform((val) => {
-        if (!val) return null;
-        if (typeof val === "string") return new Date(val);
-        return val;
-      }),
-    validTo: z
-      .union([z.string(), z.date()])
-      .optional()
-      .nullable()
-      .transform((val) => {
-        if (!val) return null;
-        if (typeof val === "string") return new Date(val);
-        return val;
-      }),
-  });
-
-export const insertPriceListItemSchema = createInsertSchema(priceListItems)
-  .omit({
-    id: true,
-    createdAt: true,
-    updatedAt: true,
-  })
-  .extend({
-    price: z.string().refine((val) => !isNaN(Number(val)) && Number(val) >= 0, {
-      message: "Giá phải là số dương",
-    }),
-  });
-
-export type PriceList = typeof priceLists.$inferSelect;
-export type InsertPriceList = z.infer<typeof insertPriceListSchema>;
-export type PriceListItem = typeof priceListItems.$inferSelect & {
-  updatedAt?: Date | string;
-  createdAt?: Date | string;
-};
-export type InsertPriceListItem = z.infer<typeof insertPriceListItemSchema>;
-
-// General Settings table
-export const generalSettings = pgTable("general_settings", {
-  id: serial("id").primaryKey(),
-  settingCode: varchar("setting_code", { length: 50 }).notNull().unique(),
-  settingName: varchar("setting_name", { length: 255 }).notNull(),
-  description: text("description"),
-  isActive: boolean("is_active").default(true).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-
-export const insertGeneralSettingSchema = createInsertSchema(generalSettings)
-  .omit({
-    id: true,
-    createdAt: true,
-    updatedAt: true,
-  })
-  .extend({
-    settingCode: z.string().min(1, "Mã thiết lập là bắt buộc"),
-    settingName: z.string().min(1, "Tên thiết lập là bắt buộc"),
-    isActive: z.boolean().optional().default(true),
-  });
-
-export type GeneralSetting = typeof generalSettings.$inferSelect;
-export type InsertGeneralSetting = z.infer<typeof insertGeneralSettingSchema>;
