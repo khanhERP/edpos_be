@@ -38,7 +38,7 @@ import {
   employees,
   purchaseReceiptDocuments,
   paymentMethods,
-} from "../shared/schema";
+} from "@shared/schema";
 import { initializeSampleData, db } from "./db";
 import { registerTenantRoutes } from "./tenant-routes";
 import {
@@ -398,6 +398,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
+  // Get category product counts
+  app.get(
+    "/api/categories/product-counts",
+    tenantMiddleware,
+    async (req: TenantRequest, res) => {
+      try {
+        console.log(
+          "🔍 GET /api/categories/product-counts - Starting request processing",
+        );
+        const tenantDb = await getTenantDatabase(req);
+        const database = tenantDb || db;
+
+        // Get all categories
+        const categories = await storage.getCategories(tenantDb);
+
+        // Get product counts per category (excluding raw materials, expenses, and inactive products)
+        const productCounts = await database
+          .select({
+            categoryId: products.categoryId,
+            count: count(),
+          })
+          .from(products)
+          .where(
+            and(
+              eq(products.isActive, true),
+              ne(products.productType, 2),
+              ne(products.productType, 4),
+              ne(products.categoryId, 15),
+              ne(products.categoryId, 17),
+            ),
+          )
+          .groupBy(products.categoryId);
+
+        // Create a map of category counts
+        const countMap = new Map(
+          productCounts.map((pc) => [pc.categoryId, pc.count]),
+        );
+
+        // Calculate total excluding expense categories
+        const totalProducts = productCounts.reduce(
+          (sum, pc) => sum + pc.count,
+          0,
+        );
+
+        // Build response with counts
+        const categoriesWithCounts = categories
+          .filter((cat) => cat.id !== 15 && cat.id !== 17) // Exclude expense categories
+          .map((cat) => ({
+            id: cat.id,
+            name: cat.name,
+            icon: cat.icon,
+            productCount: countMap.get(cat.id) || 0,
+          }))
+          .filter((cat) => cat.productCount > 0); // Only include categories with products
+
+        console.log(
+          `✅ Successfully fetched category counts - Total: ${totalProducts}, Categories: ${categoriesWithCounts.length}`,
+        );
+
+        res.json({
+          categories: categoriesWithCounts,
+          totalProducts,
+        });
+      } catch (error) {
+        console.error("❌ Error fetching category product counts:", error);
+        res.status(500).json({
+          error: "Failed to fetch category product counts",
+        });
+      }
+    },
+  );
+
   // Get next category ID
   app.get("/api/categories/next-id", async (req: TenantRequest, res) => {
     try {
@@ -543,6 +615,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req: TenantRequest, res) => {
       try {
         console.log("🔍 GET /api/products - Starting request processing");
+        const { page, limit, category, search, includeInactive, bestsellers } =
+          req.query;
+
         let tenantDb;
         try {
           tenantDb = await getTenantDatabase(req);
@@ -555,10 +630,166 @@ export async function registerRoutes(app: Express): Promise<Server> {
           tenantDb = null;
         }
 
-        let products = await storage.getProducts(tenantDb);
+        const database = tenantDb || db;
+
+        // Handle bestsellers separately - get top 30 products by sales quantity
+        if (bestsellers === "true") {
+          console.log("🔥 Fetching top 30 bestselling products");
+
+          // Get top selling products from order_items
+          const topProducts = await database
+            .select({
+              productId: orderItemsTable.productId,
+              totalQuantity:
+                sql<number>`COALESCE(SUM(CAST(${orderItemsTable.quantity} AS INTEGER)), 0)`.as(
+                  "total_quantity",
+                ),
+            })
+            .from(orderItemsTable)
+            .innerJoin(orders, eq(orderItemsTable.orderId, orders.id))
+            .where(
+              and(
+                or(eq(orders.status, "paid"), eq(orders.status, "completed")),
+                ne(orders.status, "cancelled"),
+              ),
+            )
+            .groupBy(orderItemsTable.productId)
+            .orderBy(
+              desc(
+                sql`COALESCE(SUM(CAST(${orderItemsTable.quantity} AS INTEGER)), 0)`,
+              ),
+            )
+            .limit(30);
+
+          console.log(`📊 Found ${topProducts.length} bestselling products`);
+
+          // Get full product details for these top products
+          const productIds = topProducts.map((p) => p.productId);
+
+          if (productIds.length === 0) {
+            return res.json({
+              products: [],
+              pagination: {
+                currentPage: 1,
+                totalPages: 1,
+                totalCount: 0,
+                limit: 30,
+                hasNext: false,
+                hasPrev: false,
+              },
+            });
+          }
+
+          const bestsellerProducts = await database
+            .select()
+            .from(products)
+            .where(
+              and(
+                sql`${products.id} = ANY(ARRAY[${sql.join(
+                  productIds.map((id) => sql`${id}::INTEGER`),
+                  sql`, `,
+                )}]::INTEGER[])`,
+                eq(products.isActive, true),
+                ne(products.productType, 2),
+                ne(products.productType, 4),
+                ne(products.categoryId, 15),
+                ne(products.categoryId, 17),
+              ),
+            );
+
+          // Sort by the order of productIds (bestselling order)
+          const sortedProducts = productIds
+            .map((id) => bestsellerProducts.find((p) => p.id === id))
+            .filter(Boolean);
+
+          const productsWithTaxName = sortedProducts.map((product) => ({
+            ...product,
+            taxRateName: product.taxRateName
+              ? product.taxRateName
+              : getTaxRateName(product.taxRate || "0"),
+            unit: product.unit || "Cái",
+          }));
+
+          console.log(
+            `✅ Returning ${productsWithTaxName.length} bestselling products`,
+          );
+
+          return res.json({
+            products: productsWithTaxName,
+            pagination: {
+              currentPage: 1,
+              totalPages: 1,
+              totalCount: productsWithTaxName.length,
+              limit: 30,
+              hasNext: false,
+              hasPrev: false,
+            },
+          });
+        }
+
+        // Build where conditions for regular product listing
+        const whereConditions = [];
+
+        // Filter active products and exclude raw materials/expenses
+        // Only filter by isActive if includeInactive is not 'true'
+        if (includeInactive !== "true") {
+          whereConditions.push(eq(products.isActive, true));
+        }
+        whereConditions.push(
+          and(ne(products.productType, 2), ne(products.productType, 4)),
+        );
+
+        // Exclude expense categories
+        whereConditions.push(
+          and(ne(products.categoryId, 15), ne(products.categoryId, 17)),
+        );
+
+        // Category filter
+        if (category && category !== "all" && category !== "bestsellers") {
+          const categoryId = parseInt(category as string);
+          if (!isNaN(categoryId)) {
+            whereConditions.push(eq(products.categoryId, categoryId));
+          }
+        }
+
+        // Search filter
+        if (search) {
+          const searchTerm = `%${search}%`;
+          whereConditions.push(
+            or(
+              ilike(products.name, searchTerm),
+              ilike(products.sku, searchTerm),
+            ),
+          );
+        }
+
+        // Get total count
+        const [totalCountResult] = await database
+          .select({ count: count() })
+          .from(products)
+          .where(and(...whereConditions));
+
+        const totalCount = totalCountResult?.count || 0;
+
+        // Pagination
+        const pageNum = page ? parseInt(page as string) : 1;
+        const limitNum = limit ? parseInt(limit as string) : 20;
+        const offset = (pageNum - 1) * limitNum;
+        const totalPages = Math.ceil(totalCount / limitNum);
+
+        // Get paginated products
+        let productsQuery = database
+          .select()
+          .from(products)
+          .where(and(...whereConditions))
+          .orderBy(asc(products.sort))
+          .limit(limitNum)
+          .offset(offset);
+
+        const productsList = await productsQuery;
 
         // Add taxRateName and ensure unit field is included
-        const productsWithTaxName = products.map((product) => ({
+        const productsWithTaxName = productsList.map((product) => ({
           ...product,
           taxRateName: product.taxRateName
             ? product.taxRateName
@@ -567,9 +798,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
 
         console.log(
-          `✅ Successfully fetched ${productsWithTaxName.length} products`,
+          `✅ Successfully fetched ${productsWithTaxName.length} products (page ${pageNum}/${totalPages})`,
         );
-        res.json(productsWithTaxName);
+
+        res.json({
+          products: productsWithTaxName,
+          pagination: {
+            currentPage: pageNum,
+            totalPages,
+            totalCount,
+            limit: limitNum,
+            hasNext: pageNum < totalPages,
+            hasPrev: pageNum > 1,
+          },
+        });
       } catch (error) {
         console.error("❌ Error fetching products:", error);
         res.status(500).json({
@@ -2340,6 +2582,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get pending order items for kitchen display
+  app.get("/api/order-items/pending", async (req: TenantRequest, res) => {
+    try {
+      console.log("🔍 API: Fetching pending order items for kitchen");
+      const tenantDb = await getTenantDatabase(req);
+      const database = tenantDb || db;
+
+      const items = await database
+        .select({
+          id: orderItemsTable.id,
+          orderId: orderItemsTable.orderId,
+          orderNumber: orders.orderNumber,
+          tableId: orders.tableId,
+          tableNumber: tables.tableNumber,
+          productId: orderItemsTable.productId,
+          productName: products.name,
+          productImage: products.imageUrl,
+          quantity: orderItemsTable.quantity,
+          notes: orderItemsTable.notes,
+          status: orderItemsTable.status,
+          orderedAt: orders.orderedAt,
+          createdAt: orders.createdAt,
+        })
+        .from(orderItemsTable)
+        .innerJoin(orders, eq(orderItemsTable.orderId, orders.id))
+        .leftJoin(tables, eq(orders.tableId, tables.id))
+        .leftJoin(products, eq(orderItemsTable.productId, products.id))
+        .where(eq(orderItemsTable.status, "pending"))
+        .orderBy(desc(orders.orderedAt));
+
+      console.log(`✅ API: Found ${items.length} pending order items`);
+      res.json(items);
+    } catch (error) {
+      console.error("❌ API: Failed to fetch pending order items:", error);
+      res.status(500).json({
+        error: "Failed to fetch pending order items",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Get order items with progress status for kitchen display
+  app.get("/api/order-items/progress", async (req: TenantRequest, res) => {
+    try {
+      console.log("🔍 API: Fetching progress order items for kitchen");
+      const tenantDb = await getTenantDatabase(req);
+      const database = tenantDb || db;
+
+      const items = await database
+        .select({
+          id: orderItemsTable.id,
+          orderId: orderItemsTable.orderId,
+          orderNumber: orders.orderNumber,
+          tableId: orders.tableId,
+          tableNumber: tables.tableNumber,
+          productId: orderItemsTable.productId,
+          productName: products.name,
+          productImage: products.imageUrl,
+          quantity: orderItemsTable.quantity,
+          notes: orderItemsTable.notes,
+          status: orderItemsTable.status,
+          orderedAt: orders.orderedAt,
+          createdAt: orders.createdAt,
+        })
+        .from(orderItemsTable)
+        .innerJoin(orders, eq(orderItemsTable.orderId, orders.id))
+        .leftJoin(tables, eq(orders.tableId, tables.id))
+        .leftJoin(products, eq(orderItemsTable.productId, products.id))
+        .where(eq(orderItemsTable.status, "progress"))
+        .orderBy(desc(orders.orderedAt));
+
+      console.log(`✅ API: Found ${items.length} progress order items`);
+      res.json(items);
+    } catch (error) {
+      console.error("❌ API: Failed to fetch progress order items:", error);
+      res.status(500).json({
+        error: "Failed to fetch progress order items",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Get order items with completed status for kitchen display
+  app.get("/api/order-items/completed", async (req: TenantRequest, res) => {
+    try {
+      console.log("🔍 API: Fetching completed order items for kitchen");
+      const tenantDb = await getTenantDatabase(req);
+      const database = tenantDb || db;
+
+      const items = await database
+        .select({
+          id: orderItemsTable.id,
+          orderId: orderItemsTable.orderId,
+          orderNumber: orders.orderNumber,
+          tableId: orders.tableId,
+          tableNumber: tables.tableNumber,
+          productId: orderItemsTable.productId,
+          productName: products.name,
+          productImage: products.imageUrl,
+          quantity: orderItemsTable.quantity,
+          notes: orderItemsTable.notes,
+          status: orderItemsTable.status,
+          orderedAt: orders.orderedAt,
+          createdAt: orders.createdAt,
+        })
+        .from(orderItemsTable)
+        .innerJoin(orders, eq(orderItemsTable.orderId, orders.id))
+        .leftJoin(tables, eq(orders.tableId, tables.id))
+        .leftJoin(products, eq(orderItemsTable.productId, products.id))
+        .where(eq(orderItemsTable.status, "completed"))
+        .orderBy(desc(orders.orderedAt));
+
+      console.log(`✅ API: Found ${items.length} completed order items`);
+      res.json(items);
+    } catch (error) {
+      console.error("❌ API: Failed to fetch completed order items:", error);
+      res.status(500).json({
+        error: "Failed to fetch completed order items",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   // PATCH endpoint to update specific order item fields
   app.patch("/api/order-items/:id", async (req: TenantRequest, res) => {
     try {
@@ -2411,6 +2776,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.notes = req.body.notes;
       }
 
+      if (req.body.status !== undefined) {
+        updateData.status = req.body.status;
+      }
+
       console.log(
         `🔧 Updating order item ${itemId} with converted data:`,
         updateData,
@@ -2448,6 +2817,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error(`❌ API: Failed to update order item:`, error);
       res.status(500).json({
         error: "Failed to update order item",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // PATCH endpoint to update order item status
+  app.patch("/api/order-items/:id/status", async (req: TenantRequest, res) => {
+    try {
+      const itemId = parseInt(req.params.id);
+      const { status } = req.body;
+
+      console.log(`📝 API: Updating order item ${itemId} status to ${status}`);
+
+      if (isNaN(itemId)) {
+        return res.status(400).json({
+          error: "Invalid order item ID",
+        });
+      }
+
+      if (!status) {
+        return res.status(400).json({
+          error: "Status is required",
+        });
+      }
+
+      const tenantDb = await getTenantDatabase(req);
+      const database = tenantDb || db;
+
+      const [updatedItem] = await database
+        .update(orderItemsTable)
+        .set({ status })
+        .where(eq(orderItemsTable.id, itemId))
+        .returning();
+
+      if (!updatedItem) {
+        return res.status(404).json({
+          error: "Order item not found",
+        });
+      }
+
+      console.log(`✅ Order item ${itemId} status updated to ${status}`);
+
+      res.json(updatedItem);
+    } catch (error) {
+      console.error(`❌ API: Failed to update order item status:`, error);
+      res.status(500).json({
+        error: "Failed to update order item status",
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -2917,7 +3333,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         orderItems.forEach((item) => {
           const productId = item.productId;
-          const quantity = Number(item.quantity || 0);
+          const quantity = parseFloat(item.quantity || 0);
           const revenue = Number(item.unitPrice || 0) * quantity;
           const discount = Number(item.discount || 0);
 
@@ -2936,9 +3352,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               categoryName: item.categoryName,
               productType: item.productType,
               unitPrice: item.unitPrice, // This is the pre-tax price
-              quantity: item.quantity,
+              quantity: quantity,
               total: item.total,
-              discount: item.discount,
+              discount: discount,
               totalQuantity: quantity,
               totalRevenue: revenue,
               totalDiscount: discount,
@@ -6011,6 +6427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : (parseFloat(item.unitPrice) * parseInt(item.quantity)).toString(),
           discount: item.discount, // Default discount, will be recalculated below
           notes: item.notes || null,
+          status: "pending",
         };
       });
 
@@ -15430,7 +15847,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         productSalesData.forEach((item) => {
           let productId = item.productId;
-          let quantity = Number(item.quantity || 0);
+          let quantity = parseFloat(item.quantity || 0);
           let revenue = 0;
           let discount = Number(item.discount || 0);
 
@@ -15461,9 +15878,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               categoryName: item.categoryName,
               productType: item.productType,
               unitPrice: item.unitPrice, // This is the pre-tax price
-              quantity: item.quantity,
+              quantity: quantity,
               total: item.total,
-              discount: item.discount,
+              discount: discount,
               totalQuantity: quantity,
               totalRevenue: revenue,
               totalDiscount: discount,

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import * as schema from "../shared/schema";
+import * as schema from "@shared/schema";
 import {
   categories,
   products,
@@ -15,7 +15,7 @@ import {
   storeSettings,
   suppliers,
   customers,
-} from "../shared/schema";
+} from "@shared/schema";
 import { sql } from "drizzle-orm";
 
 // Load environment variables from .env file with higher priority
@@ -339,10 +339,731 @@ export function getTenantPool(subdomain: string) {
   return dbManager.getTenantPool(subdomain);
 }
 
+// Function to check and add missing columns from schema
+export async function checkAndAddMissingColumns() {
+  console.log("🔍 Checking for missing columns in database...");
+
+  // Define schema structure with table name, column name, type, and default
+  const schemaColumns = [
+    // Categories table
+    {
+      table: "categories",
+      column: "name",
+      type: "TEXT NOT NULL",
+      default: "''",
+      index: null,
+    },
+    {
+      table: "categories",
+      column: "icon",
+      type: "TEXT NOT NULL",
+      default: "'fa-folder'",
+      index: null,
+    },
+    {
+      table: "categories",
+      column: "store_code",
+      type: "VARCHAR(50)",
+      default: null,
+      index: "idx_categories_store_code",
+    },
+
+    // Products table
+    {
+      table: "products",
+      column: "name",
+      type: "TEXT NOT NULL",
+      default: "''",
+      index: null,
+    },
+    {
+      table: "products",
+      column: "sku",
+      type: "TEXT",
+      default: null,
+      index: "idx_products_sku",
+    },
+    {
+      table: "products",
+      column: "price",
+      type: "DECIMAL(18,2) NOT NULL",
+      default: "0.00",
+      index: null,
+    },
+    {
+      table: "products",
+      column: "stock",
+      type: "INTEGER NOT NULL",
+      default: "0",
+      index: null,
+    },
+    {
+      table: "products",
+      column: "category_id",
+      type: "INTEGER",
+      default: null,
+      index: "idx_products_category_id",
+    },
+    {
+      table: "products",
+      column: "image_url",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "products",
+      column: "is_active",
+      type: "BOOLEAN NOT NULL",
+      default: "true",
+      index: "idx_products_is_active",
+    },
+    {
+      table: "products",
+      column: "product_type",
+      type: "INTEGER NOT NULL",
+      default: "1",
+      index: null,
+    },
+    {
+      table: "products",
+      column: "track_inventory",
+      type: "BOOLEAN NOT NULL",
+      default: "true",
+      index: null,
+    },
+    {
+      table: "products",
+      column: "tax_rate",
+      type: "DECIMAL(5,2) NOT NULL",
+      default: "0.00",
+      index: null,
+    },
+    {
+      table: "products",
+      column: "tax_rate_name",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "products",
+      column: "price_includes_tax",
+      type: "BOOLEAN NOT NULL",
+      default: "false",
+      index: null,
+    },
+    {
+      table: "products",
+      column: "after_tax_price",
+      type: "DECIMAL(18,2)",
+      default: null,
+      index: null,
+    },
+    {
+      table: "products",
+      column: "before_tax_price",
+      type: "DECIMAL(18,2)",
+      default: null,
+      index: "idx_products_before_tax_price",
+    },
+    {
+      table: "products",
+      column: "floor",
+      type: "VARCHAR(50)",
+      default: "'1'",
+      index: "idx_products_floor",
+    },
+    {
+      table: "products",
+      column: "zone",
+      type: "VARCHAR(50)",
+      default: "'A'",
+      index: "idx_products_zone",
+    },
+    {
+      table: "products",
+      column: "unit",
+      type: "TEXT",
+      default: "'Cái'",
+      index: null,
+    },
+    {
+      table: "products",
+      column: "is_active",
+      type: "BOOLEAN NOT NULL",
+      default: "true",
+      index: "idx_products_is_active",
+    },
+    {
+      table: "products",
+      column: "store_code",
+      type: "VARCHAR(50)",
+      default: null,
+      index: "idx_products_store_code",
+    },
+    {
+      table: "products",
+      column: "sort",
+      type: "INTEGER",
+      default: "0",
+      index: null,
+    },
+
+    // Store settings table
+    {
+      table: "store_settings",
+      column: "store_name",
+      type: "TEXT NOT NULL",
+      default: "'EDPOS 레스토랑'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "store_code",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "domain",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "tax_id",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "price_list_id",
+      type: "INTEGER",
+      default: null,
+      index: "idx_store_settings_price_list_id",
+    },
+    {
+      table: "store_settings",
+      column: "business_type",
+      type: "TEXT",
+      default: "'restaurant'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "pin_code",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "user_name",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "password",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "is_admin",
+      type: "BOOLEAN",
+      default: "false",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "parent",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "type_user",
+      type: "INTEGER",
+      default: "0",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "address",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "phone",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "email",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "open_time",
+      type: "TEXT",
+      default: "'09:00'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "close_time",
+      type: "TEXT",
+      default: "'22:00'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "gold_threshold",
+      type: "TEXT",
+      default: "'300000'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "vip_threshold",
+      type: "TEXT",
+      default: "'1000000'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "price_includes_tax",
+      type: "BOOLEAN",
+      default: "false",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "default_floor",
+      type: "TEXT",
+      default: "'1'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "default_zone",
+      type: "TEXT",
+      default: "'A'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "floor_prefix",
+      type: "TEXT",
+      default: "'층'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "zone_prefix",
+      type: "TEXT",
+      default: "'구역'",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "is_edit",
+      type: "BOOLEAN NOT NULL",
+      default: "false",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "is_cancelled",
+      type: "BOOLEAN NOT NULL",
+      default: "false",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "created_at",
+      type: "TIMESTAMPTZ",
+      default: "NOW()",
+      index: null,
+    },
+    {
+      table: "store_settings",
+      column: "updated_at",
+      type: "TIMESTAMPTZ",
+      default: "NOW()",
+      index: null,
+    },
+
+    // Orders table
+    {
+      table: "orders",
+      column: "order_number",
+      type: "TEXT",
+      default: null,
+      index: "idx_orders_order_number",
+    },
+    {
+      table: "orders",
+      column: "table_id",
+      type: "INTEGER",
+      default: null,
+      index: "idx_orders_table_id",
+    },
+    {
+      table: "orders",
+      column: "employee_id",
+      type: "INTEGER",
+      default: null,
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "customer_id",
+      type: "INTEGER",
+      default: null,
+      index: "idx_orders_customer_id",
+    },
+    {
+      table: "orders",
+      column: "status",
+      type: "TEXT NOT NULL",
+      default: "'pending'",
+      index: "idx_orders_status",
+    },
+    {
+      table: "orders",
+      column: "customer_name",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "customer_phone",
+      type: "TEXT",
+      default: null,
+      index: "idx_orders_customer_phone",
+    },
+    {
+      table: "orders",
+      column: "customer_tax_code",
+      type: "TEXT",
+      default: null,
+      index: "idx_orders_customer_tax_code",
+    },
+    {
+      table: "orders",
+      column: "customer_count",
+      type: "INTEGER",
+      default: "1",
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "subtotal",
+      type: "DECIMAL(10,2) NOT NULL",
+      default: "0.00",
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "tax",
+      type: "DECIMAL(10,2) NOT NULL",
+      default: "0.00",
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "discount",
+      type: "DECIMAL(10,2) NOT NULL",
+      default: "0.00",
+      index: "idx_orders_discount",
+    },
+    {
+      table: "orders",
+      column: "total",
+      type: "DECIMAL(10,2) NOT NULL",
+      default: "0.00",
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "payment_method",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "payment_status",
+      type: "TEXT NOT NULL",
+      default: "'pending'",
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "is_paid",
+      type: "BOOLEAN NOT NULL",
+      default: "false",
+      index: "idx_orders_is_paid",
+    },
+    {
+      table: "orders",
+      column: "einvoice_status",
+      type: "INTEGER NOT NULL",
+      default: "0",
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "template_number",
+      type: "VARCHAR(50)",
+      default: null,
+      index: "idx_orders_template_number",
+    },
+    {
+      table: "orders",
+      column: "symbol",
+      type: "VARCHAR(20)",
+      default: null,
+      index: "idx_orders_symbol",
+    },
+    {
+      table: "orders",
+      column: "invoice_number",
+      type: "VARCHAR(50)",
+      default: null,
+      index: "idx_orders_invoice_number",
+    },
+    {
+      table: "orders",
+      column: "sales_channel",
+      type: "TEXT NOT NULL",
+      default: "'table'",
+      index: "idx_orders_sales_channel",
+    },
+    {
+      table: "orders",
+      column: "price_include_tax",
+      type: "BOOLEAN NOT NULL",
+      default: "false",
+      index: "idx_orders_price_include_tax",
+    },
+    {
+      table: "orders",
+      column: "notes",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "store_code",
+      type: "VARCHAR(50)",
+      default: null,
+      index: "idx_orders_store_code",
+    },
+    {
+      table: "orders",
+      column: "ordered_at",
+      type: "TIMESTAMPTZ",
+      default: "NOW()",
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "served_at",
+      type: "TIMESTAMPTZ",
+      default: null,
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "paid_at",
+      type: "TIMESTAMPTZ",
+      default: null,
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "created_at",
+      type: "TIMESTAMPTZ",
+      default: "NOW()",
+      index: null,
+    },
+    {
+      table: "orders",
+      column: "updated_at",
+      type: "TIMESTAMPTZ",
+      default: "NOW()",
+      index: null,
+    },
+
+    // Order items table
+    {
+      table: "order_items",
+      column: "order_id",
+      type: "INTEGER",
+      default: null,
+      index: null,
+    },
+    {
+      table: "order_items",
+      column: "product_id",
+      type: "INTEGER",
+      default: null,
+      index: null,
+    },
+    {
+      table: "order_items",
+      column: "quantity",
+      type: "NUMERIC(8,4) NOT NULL",
+      default: "1",
+      index: null,
+    },
+    {
+      table: "order_items",
+      column: "unit_price",
+      type: "DECIMAL(10,2) NOT NULL",
+      default: "0.00",
+      index: null,
+    },
+    {
+      table: "order_items",
+      column: "total",
+      type: "DECIMAL(10,2) NOT NULL",
+      default: "0.00",
+      index: null,
+    },
+    {
+      table: "order_items",
+      column: "discount",
+      type: "DECIMAL(10,2) NOT NULL",
+      default: "0.00",
+      index: "idx_order_items_discount",
+    },
+    {
+      table: "order_items",
+      column: "tax",
+      type: "DECIMAL(10,2) NOT NULL",
+      default: "0.00",
+      index: "idx_order_items_tax",
+    },
+    {
+      table: "order_items",
+      column: "price_before_tax",
+      type: "DECIMAL(10,2) NOT NULL",
+      default: "0.00",
+      index: "idx_order_items_price_before_tax",
+    },
+    {
+      table: "order_items",
+      column: "status",
+      type: "VARCHAR(50) NOT NULL",
+      default: "'pending'",
+      index: "idx_order_items_status",
+    },
+    {
+      table: "order_items",
+      column: "notes",
+      type: "TEXT",
+      default: null,
+      index: null,
+    },
+    {
+      table: "order_items",
+      column: "store_code",
+      type: "VARCHAR(50)",
+      default: null,
+      index: "idx_order_items_store_code",
+    },
+  ];
+
+  let addedColumns = 0;
+  let createdIndexes = 0;
+
+  for (const {
+    table,
+    column,
+    type,
+    default: defaultValue,
+    index,
+  } of schemaColumns) {
+    try {
+      // Check if column exists
+      const checkColumn = await db.execute(sql`
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = ${table}
+        AND column_name = ${column}
+      `);
+
+      if (!checkColumn.rows || checkColumn.rows.length === 0) {
+        // Column doesn't exist, add it
+        const alterQuery = defaultValue
+          ? `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${type} DEFAULT ${defaultValue}`
+          : `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${type}`;
+
+        await db.execute(sql.raw(alterQuery));
+        console.log(`  ✅ Added column ${table}.${column}`);
+        addedColumns++;
+      }
+
+      // Create index if specified and doesn't exist
+      if (index) {
+        const checkIndex = await db.execute(sql`
+          SELECT indexname 
+          FROM pg_indexes 
+          WHERE schemaname = 'public' 
+          AND tablename = ${table}
+          AND indexname = ${index}
+        `);
+
+        if (!checkIndex.rows || checkIndex.rows.length === 0) {
+          await db.execute(
+            sql.raw(
+              `CREATE INDEX IF NOT EXISTS ${index} ON ${table}(${column})`,
+            ),
+          );
+          console.log(`  📊 Created index ${index} on ${table}.${column}`);
+          createdIndexes++;
+        }
+      }
+    } catch (error) {
+      console.log(
+        `  ⚠️ Error checking/adding ${table}.${column}:`,
+        error.message,
+      );
+    }
+  }
+
+  console.log(
+    `\n✅ Column check completed: ${addedColumns} columns added, ${createdIndexes} indexes created\n`,
+  );
+}
+
 // Initialize sample data function
 export async function initializeSampleData() {
   try {
     console.log("Running database migrations...");
+
+    // Run the automatic column check first
+    await checkAndAddMissingColumns();
 
     // Run migration for membership thresholds
     try {
@@ -634,6 +1355,32 @@ export async function initializeSampleData() {
       );
     }
 
+    // Add status column to order_items table
+    try {
+      await db.execute(sql`
+        ALTER TABLE order_items ADD COLUMN IF NOT EXISTS status VARCHAR(50) NOT NULL DEFAULT 'pending'
+      `);
+
+      // Create index for status
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_order_items_status ON order_items(status)
+      `);
+
+      // Update existing order items to set status to pending if null
+      await db.execute(sql`
+        UPDATE order_items SET status = 'pending' WHERE status IS NULL
+      `);
+
+      console.log(
+        "Migration for status column in order_items table completed successfully.",
+      );
+    } catch (error) {
+      console.log(
+        "Order items status column migration failed or already applied:",
+        error,
+      );
+    }
+
     // Add tax column to order_items table
     try {
       await db.execute(sql`
@@ -682,6 +1429,23 @@ export async function initializeSampleData() {
     } catch (error) {
       console.log(
         "Order items price_before_tax column migration failed or already applied:",
+        error,
+      );
+    }
+
+    // Update quantity column in order_items table to NUMERIC(8,4)
+    try {
+      await db.execute(sql`
+        ALTER TABLE order_items 
+        ALTER COLUMN quantity TYPE NUMERIC(8,4)
+      `);
+
+      console.log(
+        "Migration for quantity column in order_items table to NUMERIC(8,4) completed successfully.",
+      );
+    } catch (error) {
+      console.log(
+        "Order items quantity column migration failed or already applied:",
         error,
       );
     }
@@ -737,55 +1501,6 @@ export async function initializeSampleData() {
         "Products before_tax_price column migration failed or already applied:",
         error,
       );
-    }
-
-    // Migration: Increase price precision in products table to support larger amounts
-    try {
-      console.log(
-        "🔄 Starting price precision migration for products table...",
-      );
-
-      // Check current precision of price column
-      const priceColumnCheck = await db.execute(sql`
-        SELECT column_name, data_type, numeric_precision, numeric_scale
-        FROM information_schema.columns
-        WHERE table_schema = 'public' 
-        AND table_name = 'products' 
-        AND column_name IN ('price', 'after_tax_price', 'before_tax_price')
-      `);
-
-      let needsMigration = false;
-      if (priceColumnCheck.rows && priceColumnCheck.rows.length > 0) {
-        for (const col of priceColumnCheck.rows) {
-          if (col.numeric_precision && col.numeric_precision < 18) {
-            needsMigration = true;
-            console.log(
-              `  ⚠️ Column ${col.column_name} has precision ${col.numeric_precision}, needs upgrade to 18`,
-            );
-          }
-        }
-      }
-
-      if (needsMigration) {
-        // Increase precision for all price columns
-        await db.execute(sql`
-          ALTER TABLE products 
-          ALTER COLUMN price TYPE DECIMAL(18, 2),
-          ALTER COLUMN after_tax_price TYPE DECIMAL(18, 2),
-          ALTER COLUMN before_tax_price TYPE DECIMAL(18, 2)
-        `);
-
-        console.log("✅ Price precision migration completed successfully");
-        console.log(
-          "  📈 Products table now supports prices up to 999,999,999,999,999.99",
-        );
-      } else {
-        console.log(
-          "ℹ️ Price columns already have sufficient precision (18,2)",
-        );
-      }
-    } catch (error) {
-      console.log("⚠️ Price precision migration error:", error.message);
     }
 
     // Add tax_rate_name column to products table
@@ -869,6 +1584,112 @@ export async function initializeSampleData() {
       );
     }
 
+    // Add isActive column to products table if it doesn't exist
+    try {
+      await db.execute(sql`
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true
+      `);
+
+      // Create index for better query performance
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_products_is_active ON products(is_active)
+      `);
+
+      // Update existing products to set is_active to true if null
+      await db.execute(sql`
+        UPDATE products SET is_active = true WHERE is_active IS NULL
+      `);
+      console.log("✅ isActive column added to products successfully");
+    } catch (error) {
+      console.log(
+        "ℹ️ isActive column already exists or migration completed:",
+        error.message,
+      );
+    }
+
+    // Initialize order_change_history table if it doesn't exist
+    try {
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS order_change_history (
+          id SERIAL PRIMARY KEY,
+          order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          order_number VARCHAR(100),
+          changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          ip_address VARCHAR(255) NOT NULL,
+          user_id INTEGER,
+          user_name VARCHAR(255) NOT NULL,
+          action VARCHAR(50) NOT NULL DEFAULT 'edit',
+          detailed_description TEXT NOT NULL,
+          store_code VARCHAR(50),
+          store_name VARCHAR(255),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      // Ensure order_number column exists (migration for existing tables)
+      await db.execute(sql`
+        ALTER TABLE order_change_history 
+        ADD COLUMN IF NOT EXISTS order_number VARCHAR(100)
+      `);
+
+      // Ensure store_name column exists (migration for existing tables)
+      await db.execute(sql`
+        ALTER TABLE order_change_history 
+        ADD COLUMN IF NOT EXISTS store_name VARCHAR(255)
+      `);
+
+      // Add isEdit and isCancelled columns to store_settings
+      try {
+        await db.execute(sql`
+          ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS is_edit BOOLEAN NOT NULL DEFAULT false
+        `);
+        await db.execute(sql`
+          ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN NOT NULL DEFAULT false
+        `);
+
+        // Update existing records to have default values
+        await db.execute(sql`
+          UPDATE store_settings 
+          SET is_edit = COALESCE(is_edit, false),
+              is_cancelled = COALESCE(is_cancelled, false)
+          WHERE is_edit IS NULL OR is_cancelled IS NULL
+        `);
+
+        console.log(
+          "✅ isEdit and isCancelled columns added to store_settings successfully",
+        );
+      } catch (error) {
+        console.log(
+          "ℹ️ isEdit and isCancelled columns already exist or migration completed:",
+          error.message,
+        );
+      }
+
+      // Create indexes for better performance
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_order_change_history_order_id ON order_change_history(order_id)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_order_change_history_changed_at ON order_change_history(changed_at)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_order_change_history_store_code ON order_change_history(store_code)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_order_change_history_order_number ON order_change_history(order_number)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_order_change_history_store_name ON order_change_history(store_name)
+      `);
+
+      console.log("✅ Order change history table initialized successfully");
+    } catch (error) {
+      console.log(
+        "ℹ️ Order change history table already exists or initialization failed:",
+        error,
+      );
+    }
+
     // Add customer phone and tax code to orders table
     try {
       await db.execute(sql`
@@ -894,6 +1715,166 @@ export async function initializeSampleData() {
         "ℹ️ Customer info columns already exist or migration completed:",
         error.message,
       );
+    }
+
+    // Add customerId to orders table
+    try {
+      await db.execute(sql`
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id)
+      `);
+
+      // Create index for better query performance
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id)
+      `);
+
+      // Update existing orders to link with customers based on phone number
+      await db.execute(sql`
+        UPDATE orders o
+        SET customer_id = c.id
+        FROM customers c
+        WHERE o.customer_phone IS NOT NULL 
+          AND c.phone IS NOT NULL
+          AND o.customer_phone = c.phone
+          AND o.customer_id IS NULL
+      `);
+
+      console.log("✅ customerId column added to orders table successfully");
+    } catch (error) {
+      console.log(
+        "ℹ️ customerId column already exists or migration completed:",
+        error.message,
+      );
+    }
+
+    // Add customer phone and tax code to orders table
+    try {
+      await db.execute(sql`
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_phone TEXT
+      `);
+      await db.execute(sql`
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_tax_code TEXT
+      `);
+
+      // Create indexes for better search performance
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_orders_customer_phone ON orders(customer_phone)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_orders_customer_tax_code ON orders(customer_tax_code)
+      `);
+
+      console.log(
+        "✅ Customer phone and tax code columns added to orders successfully",
+      );
+    } catch (error) {
+      console.log(
+        "ℹ️ Customer info columns already exist or migration completed:",
+        error.message,
+      );
+    }
+
+    // Add domain column to store_settings
+    try {
+      await db.execute(sql`
+        ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS domain TEXT
+      `);
+
+      console.log("✅ Domain column added to store_settings successfully");
+    } catch (error) {
+      console.log(
+        "ℹ️ Domain column already exists or migration completed:",
+        error.message,
+      );
+    }
+
+    // Add isEdit and isCancelled columns to store_settings
+    try {
+      await db.execute(sql`
+        ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS is_edit BOOLEAN NOT NULL DEFAULT false
+      `);
+      await db.execute(sql`
+        ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN NOT NULL DEFAULT false
+      `);
+
+      // Update existing records to have default values
+      await db.execute(sql`
+        UPDATE store_settings 
+        SET is_edit = COALESCE(is_edit, false),
+            is_cancelled = COALESCE(is_cancelled, false)
+        WHERE is_edit IS NULL OR is_cancelled IS NULL
+      `);
+
+      console.log(
+        "✅ isEdit and isCancelled columns added to store_settings successfully",
+      );
+    } catch (error) {
+      console.log(
+        "ℹ️ isEdit and isCancelled columns already exist or migration completed:",
+        error.message,
+      );
+    }
+
+    // Add storeCode column to all tables for multi-tenant support
+    try {
+      console.log("🔄 Adding storeCode column to all tables...");
+
+      const tablesToUpdate = [
+        "categories",
+        "products",
+        "transactions",
+        "transaction_items",
+        "employees",
+        "attendance_records",
+        "tables",
+        "orders",
+        "order_items",
+        "suppliers",
+        "customers",
+        "point_transactions",
+        "inventory_transactions",
+        "invoices",
+        "invoice_items",
+        "einvoice_connections",
+        "printer_configs",
+        "invoice_templates",
+        "purchase_receipts",
+        "purchase_receipt_items",
+        "purchase_receipt_documents",
+        "income_vouchers",
+        "expense_vouchers",
+        "payment_methods",
+      ];
+
+      for (const table of tablesToUpdate) {
+        try {
+          await db.execute(
+            sql.raw(`
+            ALTER TABLE ${table} 
+            ADD COLUMN IF NOT EXISTS store_code VARCHAR(50)
+          `),
+          );
+
+          // Create index for better query performance
+          await db.execute(
+            sql.raw(`
+            CREATE INDEX IF NOT EXISTS idx_${table}_store_code 
+            ON ${table}(store_code)
+          `),
+          );
+
+          console.log(`  ✅ Added storeCode to ${table}`);
+        } catch (tableError) {
+          console.log(
+            `  ℹ️ storeCode already exists in ${table} or error:`,
+            tableError.message,
+          );
+        }
+      }
+
+      console.log("✅ storeCode column migration completed successfully");
+    } catch (error) {
+      console.log("⚠️ storeCode migration error:", error);
     }
 
     // Add isPaid column to orders table
@@ -1062,23 +2043,6 @@ export async function initializeSampleData() {
     } catch (error) {
       console.log(
         "E-invoice connections table already exists or initialization failed:",
-        error,
-      );
-    }
-
-    // Add auto_publish column to einvoice_connections table
-    try {
-      await db.execute(sql`
-        ALTER TABLE einvoice_connections 
-        ADD COLUMN IF NOT EXISTS auto_publish BOOLEAN NOT NULL DEFAULT false
-      `);
-
-      console.log(
-        "Migration for auto_publish column in einvoice_connections completed successfully.",
-      );
-    } catch (error) {
-      console.log(
-        "Auto_publish column migration already applied or error:",
         error,
       );
     }
@@ -1473,6 +2437,59 @@ export async function initializeSampleData() {
       );
     }
 
+    // Add userName, password, isAdmin, and parent columns to store_settings
+    try {
+      await db.execute(sql`
+        ALTER TABLE store_settings 
+        ADD COLUMN IF NOT EXISTS user_name TEXT
+      `);
+      await db.execute(sql`
+        ALTER TABLE store_settings 
+        ADD COLUMN IF NOT EXISTS password TEXT
+      `);
+      await db.execute(sql`
+        ALTER TABLE store_settings 
+        ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false
+      `);
+      await db.execute(sql`
+        ALTER TABLE store_settings 
+        ADD COLUMN IF NOT EXISTS parent TEXT
+      `);
+
+      // Remove unique constraint on pin_code to allow duplicates
+      await db.execute(sql`
+        DROP INDEX IF EXISTS store_settings_pin_code_unique
+      `);
+
+      await db.execute(sql`
+        DROP INDEX IF EXISTS store_settings_pin_code_unique_idx
+      `);
+
+      // Add typeUser column
+      await db.execute(sql`
+        ALTER TABLE store_settings 
+        ADD COLUMN IF NOT EXISTS type_user INTEGER DEFAULT 0
+      `);
+
+      // Update existing records to have default values
+      await db.execute(sql`
+        UPDATE store_settings 
+        SET is_admin = COALESCE(is_admin, false),
+            type_user = COALESCE(type_user, 0)
+        WHERE is_admin IS NULL OR type_user IS NULL
+      `);
+
+      console.log(
+        "✅ userName, password, isAdmin, parent, and typeUser columns added to store_settings successfully",
+      );
+      console.log("✅ Unique constraint added to pin_code column");
+    } catch (error) {
+      console.log(
+        "ℹ️ User management columns already exist or migration completed:",
+        error.message,
+      );
+    }
+
     // Ensure floor column exists in tables
     try {
       await db.execute(sql`
@@ -1746,6 +2763,72 @@ export async function initializeSampleData() {
     } catch (error) {
       console.log(
         "Payment methods table already exists or initialization failed:",
+        error,
+      );
+    }
+
+    // Initialize price_lists table if it doesn't exist
+    try {
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS price_lists (
+          id SERIAL PRIMARY KEY,
+          code VARCHAR(50) NOT NULL UNIQUE,
+          name VARCHAR(255) NOT NULL,
+          description TEXT,
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          is_default BOOLEAN NOT NULL DEFAULT false,
+          valid_from TIMESTAMP WITH TIME ZONE,
+          valid_to TIMESTAMP WITH TIME ZONE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        )
+      `);
+
+      // Create indexes for better performance
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_price_lists_code ON price_lists(code)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_price_lists_is_active ON price_lists(is_active)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_price_lists_is_default ON price_lists(is_default)
+      `);
+
+      console.log("✅ Price lists table initialized successfully");
+    } catch (error) {
+      console.log(
+        "Price lists table already exists or initialization failed:",
+        error,
+      );
+    }
+
+    // Initialize price_list_items table if it doesn't exist
+    try {
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS price_list_items (
+          id SERIAL PRIMARY KEY,
+          price_list_id INTEGER NOT NULL REFERENCES price_lists(id) ON DELETE CASCADE,
+          product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          price DECIMAL(10, 2) NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+          UNIQUE(price_list_id, product_id)
+        )
+      `);
+
+      // Create indexes for better performance
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_price_list_items_price_list_id ON price_list_items(price_list_id)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_price_list_items_product_id ON price_list_items(product_id)
+      `);
+
+      console.log("✅ Price list items table initialized successfully");
+    } catch (error) {
+      console.log(
+        "Price list items table already exists or initialization failed:",
         error,
       );
     }
@@ -2347,32 +3430,159 @@ export async function initializeSampleData() {
       );
     }
 
+    // Add domain column to store_settings table
+    try {
+      await db.execute(sql`
+
+      ALTER TABLE store_settings 
+        ADD COLUMN IF NOT EXISTS domain TEXT
+      `);
+
+      console.log(
+        "Migration for domain column in store_settings completed successfully.",
+      );
+    } catch (error) {
+      console.log("Domain column migration already applied or error:", error);
+    }
+
+    // Add price_list_id column to store_settings
+    try {
+      await db.execute(sql`
+
+      ALTER TABLE store_settings 
+        ADD COLUMN IF NOT EXISTS price_list_id INTEGER REFERENCES price_lists(id)
+      `);
+
+      // Create index for price_list_id
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_store_settings_price_list_id 
+        ON store_settings(price_list_id)
+      `);
+
+      console.log(
+        "Migration for price_list_id column in store_settings completed successfully.",
+      );
+    } catch (error) {
+      console.log("Price list ID migration already applied or error:", error);
+    }
+
+    // Add store_code to price_lists and price_list_items tables
+    try {
+      await db.execute(sql`
+        ALTER TABLE price_lists 
+        ADD COLUMN IF NOT EXISTS store_code VARCHAR(50)
+      `);
+
+      await db.execute(sql`
+        ALTER TABLE price_list_items 
+        ADD COLUMN IF NOT EXISTS store_code VARCHAR(50)
+      `);
+
+      // Create indexes for better performance
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_price_lists_store_code ON price_lists(store_code)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_price_list_items_store_code ON price_list_items(store_code)
+      `);
+
+      console.log(
+        "Migration for store_code columns in price_lists tables completed successfully.",
+      );
+    } catch (error) {
+      console.log(
+        "Price lists store_code migration already applied or error:",
+        error,
+      );
+    }
+
+    // Create general_settings table
+    try {
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS general_settings (
+          id SERIAL PRIMARY KEY,
+          setting_code VARCHAR(100) NOT NULL UNIQUE,
+          setting_name VARCHAR(255) NOT NULL,
+          setting_value TEXT,
+          description TEXT,
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          store_code VARCHAR(50),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        )
+      `);
+
+      // Create indexes for better performance
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_general_settings_code ON general_settings(setting_code)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_general_settings_active ON general_settings(is_active)
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS idx_general_settings_store_code ON general_settings(store_code)
+      `);
+
+      console.log("✅ General settings table initialized successfully");
+    } catch (error) {
+      console.log(
+        "General settings table already exists or initialization failed:",
+        error,
+      );
+    }
+
+    // Add price_list_id column to store_settings
+    try {
+      await db.execute(sql`
+
+     ALTER TABLE store_settings 
+        ADD
+  COLUMN IF NOT EXISTS price_list_id
+  INTEGER REFERENCES price_lists(id)
+      `);
+
+      // Create index for price_list_id
+      await db.execute(sql`
+
+  CREATE INDEX IF
+  NOT EXISTS idx_store_settings_price_list_id 
+
+    ON store_settings(price_list_id)
+      `);
+
+      console.log(
+        "Migration for price_list_id column in store_settings completed successfully.",
+      );
+    } catch (error) {
+      console.log("Price list ID migration already applied or error:", error);
+    }
+
+    // Run comprehensive column check migration
+    try {
+      console.log("🔍 Checking for missing columns from schema.ts...");
+
+      // Read and execute the comprehensive migration file
+      const fs = await import("fs");
+      const path = await import("path");
+      const migrationPath = path.join(
+        process.cwd(),
+        "server",
+        "check_and_add_missing_columns.sql",
+      );
+
+      if (fs.existsSync(migrationPath)) {
+        const migrationSQL = fs.readFileSync(migrationPath, "utf-8");
+        await db.execute(sql.raw(migrationSQL));
+        console.log("✅ Column check migration completed successfully");
+      } else {
+        console.log("⚠️ Migration file not found, skipping column check");
+      }
+    } catch (migrationError) {
+      console.log("⚠️ Column check migration error:", migrationError);
+    }
+
     console.log("✅ Database setup completed successfully");
   } catch (error) {
     console.log("⚠️ Sample data initialization skipped:", error);
-  }
-
-  // Run comprehensive column check migration
-  try {
-    console.log("🔍 Checking for missing columns from schema.ts...");
-
-    // Read and execute the comprehensive migration file
-    const fs = await import("fs");
-    const path = await import("path");
-    const migrationPath = path.join(
-      process.cwd(),
-      "server",
-      "check_and_add_missing_columns.sql",
-    );
-
-    if (fs.existsSync(migrationPath)) {
-      const migrationSQL = fs.readFileSync(migrationPath, "utf-8");
-      await db.execute(sql.raw(migrationSQL));
-      console.log("✅ Column check migration completed successfully");
-    } else {
-      console.log("⚠️ Migration file not found, skipping column check");
-    }
-  } catch (migrationError) {
-    console.log("⚠️ Column check migration error:", migrationError);
   }
 }
