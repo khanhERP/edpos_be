@@ -244,6 +244,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Payment Methods API
+  app.get("/api/payment-methods/active", async (req: TenantRequest, res) => {
+    try {
+      const tenantDb = await getTenantDatabase(req);
+      const database = tenantDb || db;
+
+      const methods = await database
+        .select()
+        .from(paymentMethods)
+        .where(eq(paymentMethods.enabled, true))
+        .orderBy(asc(paymentMethods.sortOrder));
+
+      console.log(`✅ Fetched ${methods.length} payment methods`);
+      res.json(methods);
+    } catch (error) {
+      console.error("❌ Error fetching payment methods:", error);
+      res.status(500).json({
+        error: "Failed to fetch payment methods",
+      });
+    }
+  });
+
   app.post("/api/payment-methods", async (req: TenantRequest, res) => {
     try {
       const tenantDb = await getTenantDatabase(req);
