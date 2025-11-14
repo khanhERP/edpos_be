@@ -1254,6 +1254,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         "customerName",
         "customerCount",
         "notes",
+        "einvoiceStatus",
+        "invoiceStatus",
+        "invoiceNumber",
+        "symbol",
+        "templateNumber",
       ];
 
       allowedFields.forEach((field) => {
