@@ -842,7 +842,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     },
   );
+  
+  app.get(
+    "/api/products/getByOrderId/:orderId",
+    async (req: TenantRequest, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId);
+        
+        if (isNaN(orderId)) {
+          return res.status(400).json({ message: "Invalid order ID" });
+        }
 
+        const tenantDb = await getTenantDatabase(req);
+        const database = tenantDb || db;
+
+        console.log(`🔍 Fetching products for order ID: ${orderId}`);
+
+        const results = await database
+          .select({
+            // Product fields
+            id: products.id,
+            name: products.name,
+            sku: products.sku,
+            price: products.price,
+            categoryId: products.categoryId,
+            imageUrl: products.imageUrl,
+            stock: products.stock,
+            isActive: products.isActive,
+            taxRate: products.taxRate,
+            taxRateName: products.taxRateName,
+            afterTaxPrice: products.afterTaxPrice,
+            beforeTaxPrice: products.beforeTaxPrice,
+            unit: products.unit,
+            // Order item fields
+            orderItemId: orderItemsTable.id,
+            quantity: orderItemsTable.quantity,
+            unitPrice: orderItemsTable.unitPrice,
+            total: orderItemsTable.total,
+            discount: orderItemsTable.discount,
+            tax: orderItemsTable.tax,
+            priceBeforeTax: orderItemsTable.priceBeforeTax,
+          })
+          .from(orderItemsTable)
+          .innerJoin(products, eq(products.id, orderItemsTable.productId))
+          .where(eq(orderItemsTable.orderId, orderId));
+
+        if (results.length === 0) {
+          console.log(`⚠️ No products found for order ID: ${orderId}`);
+          return res.status(404).json({ 
+            message: "No products found for this order",
+            orderId 
+          });
+        }
+
+        console.log(`✅ Found ${results.length} products for order ${orderId}`);
+        res.json(results);
+      } catch (error) {
+        console.error("❌ Error fetching products by orderId:", error);
+        res.status(500).json({ 
+          message: "Failed to fetch products by orderId",
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    },
+  );
+  
   // Endpoint for POS to get only active products
   app.get("/api/products/active", async (req: TenantRequest, res) => {
     try {
