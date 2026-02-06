@@ -9,7 +9,7 @@
     "start": "node dist/server/index.js"
   },
   "_moduleAliases": {
-    "@shared": "dist/shared"
+    "../shared": "dist/shared"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

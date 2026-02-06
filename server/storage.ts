@@ -559,24 +559,6 @@ interface InsertTransaction {
   createdAt?: Date;
 }
 
-interface TransactionItem {
-  id: number;
-  transactionId: number;
-  productId: number;
-  quantity: number;
-  unitPrice: number;
-  total: number;
-  productName: string;
-}
-
-interface InsertTransactionItem {
-  productId: number;
-  quantity: number;
-  unitPrice: number;
-  total: number;
-  productName: string;
-}
-
 interface Receipt extends Transaction {
   items: TransactionItem[];
 }
@@ -724,6 +706,7 @@ interface StoreSettings {
   taxRate?: string;
   goldThreshold?: string;
   vipThreshold?: string;
+  isCreditCard?: boolean;
   priceIncludesTax?: boolean; // Added for clarity
   createdAt: string;
   updatedAt: string;
@@ -744,6 +727,7 @@ interface InsertStoreSettings {
   taxRate?: string;
   goldThreshold?: string;
   vipThreshold?: string;
+  isCreditCard?: boolean;
   priceIncludesTax?: boolean; // Added for clarity
   defaultFloor?: string; // Added for default floor
   defaultZone?: string; // Added for default zone
@@ -1685,7 +1669,7 @@ export class DatabaseStorage implements IStorage {
 
     try {
       console.log(
-        `🔍 Starting stock update for product ID: ${id}, quantity change: ${quantity}`,
+        `ℹ️ Stock update skipped for product ID: ${id} - using database trigger instead`,
       );
 
       const [product] = await database
@@ -1694,76 +1678,40 @@ export class DatabaseStorage implements IStorage {
         .where(eq(products.id, id));
 
       if (!product) {
-        console.error(`❌ Product not found for stock update: ID ${id}`);
+        console.error(`❌ Product not found: ID ${id}`);
         throw new Error(`Product with ID ${id} not found`);
       }
 
-      console.log(
-        `📋 Product found: ${product.name}, current stock: ${product.stock}, tracks inventory: ${product.trackInventory}`,
-      );
-
-      // Check if product tracks inventory before updating
+      // Check if product tracks inventory before validation
       if (!product.trackInventory) {
         console.log(
-          `⏭️ Product ${product.name} does not track inventory - skipping stock update`,
+          `⏭️ Product ${product.name} does not track inventory - skipping stock validation`,
         );
-        return product; // Return the original product without updating stock
+        return product;
       }
 
+      // Only validate stock availability, don't update it (trigger will handle that)
       const currentStock = product.stock || 0;
-      // Đơn giản: chỉ cần lấy tổng tồn kho hiện tại trừ đi số lượng bán
-      const newStock = currentStock - Math.abs(quantity);
+      const requiredQuantity = Math.abs(quantity);
 
-      // Log the stock calculation
-      console.log(
-        `📦 Simple stock calculation for ${product.name} (ID: ${id}):`,
-      );
+      console.log(`📦 Stock validation for ${product.name} (ID: ${id}):`);
       console.log(`   - Current stock: ${currentStock}`);
-      console.log(`   - Quantity to subtract: ${Math.abs(quantity)}`);
-      console.log(`   - New stock: ${newStock}`);
+      console.log(`   - Required quantity: ${requiredQuantity}`);
 
       // Check if we have sufficient stock
-      if (newStock < 0) {
-        const errorMsg = `Insufficient stock for ${product.name}. Available: ${currentStock}, Required: ${Math.abs(quantity)}`;
+      if (currentStock < requiredQuantity) {
+        const errorMsg = `Insufficient stock for ${product.name}. Available: ${currentStock}, Required: ${requiredQuantity}`;
         console.error(`❌ ${errorMsg}`);
         throw new Error(errorMsg);
       }
 
-      const [updatedProduct] = await database
-        .update(products)
-        .set({ stock: newStock })
-        .where(eq(products.id, id))
-        .returning();
-
-      if (updatedProduct) {
-        console.log(
-          `✅ Stock updated successfully for ${product.name}: ${currentStock} → ${newStock}`,
-        );
-
-        // Create inventory transaction record
-        try {
-          await database.execute(sql`
-            INSERT INTO inventory_transactions
-            (product_id, type, quantity, previous_stock, new_stock, notes, created_at)
-            VALUES (${id}, 'subtract', ${Math.abs(quantity)}, ${currentStock}, ${newStock},
-                   'Stock deduction from sale', ${new Date()})
-          `);
-          console.log(`📝 Inventory transaction recorded for ${product.name}`);
-        } catch (invError) {
-          console.error(`❌ Failed to record inventory transaction:`, invError);
-          // Don't throw here as the stock update was successful
-        }
-
-        return updatedProduct;
-      } else {
-        console.error(
-          `❌ Failed to update stock for ${product.name} - no updated product returned`,
-        );
-        throw new Error(`Failed to update stock for product: ${product.name}`);
-      }
+      console.log(
+        `✅ Stock validation passed for ${product.name}. Database trigger will handle inventory update.`,
+      );
+      return product;
     } catch (error) {
-      console.error(`❌ Error updating stock for product ID ${id}:`, error);
-      throw error; // Re-throw the error so the caller can handle it
+      console.error(`❌ Error validating stock for product ID ${id}:`, error);
+      throw error;
     }
   }
 
@@ -1821,50 +1769,10 @@ export class DatabaseStorage implements IStorage {
             `✅ Transaction item created with ID: ${transactionItem.id}`,
           );
 
-          // Update product stock - trừ tồn kho đơn giản
+          // Stock deduction will be handled automatically by database trigger
           console.log(
-            `🔢 Updating stock for product ID ${item.productId}: subtract ${item.quantity}`,
+            `ℹ️ Skipping manual stock deduction - database trigger will handle inventory updates automatically`,
           );
-
-          try {
-            const updatedProduct = await this.updateProductStock(
-              item.productId,
-              item.quantity,
-              tenantDb,
-            );
-
-            if (updatedProduct) {
-              console.log(
-                `✅ Stock successfully updated for ${item.productName}: New stock = ${updatedProduct.stock}`,
-              );
-              stockUpdateResults.push({
-                productName: item.productName,
-                success: true,
-              });
-            } else {
-              const errorMsg = `Failed to update stock for ${item.productName} - no product returned`;
-              console.error(`❌ ${errorMsg}`);
-              stockUpdateResults.push({
-                productName: item.productName,
-                success: false,
-                error: errorMsg,
-              });
-            }
-          } catch (stockError) {
-            const errorMsg =
-              stockError instanceof Error
-                ? stockError.message
-                : String(stockError);
-            console.error(
-              `❌ Stock update error for ${item.productName}:`,
-              errorMsg,
-            );
-            stockUpdateResults.push({
-              productName: item.productName,
-              success: false,
-              error: errorMsg,
-            });
-          }
 
           transactionItemsWithIds.push(transactionItem);
         } catch (itemError) {
@@ -1878,19 +1786,22 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      // Log stock update summary
-      const successfulUpdates = stockUpdateResults.filter((r) => r.success);
-      const failedUpdates = stockUpdateResults.filter((r) => !r.success);
+      // Log stock validation summary
+      const successfulValidations = stockUpdateResults.filter((r) => r.success);
+      const failedValidations = stockUpdateResults.filter((r) => !r.success);
 
-      console.log(`📊 Stock update summary:`);
+      console.log(`📊 Stock validation summary:`);
       console.log(
-        `   - Successful: ${successfulUpdates.length}/${items.length}`,
+        `   - Successful: ${successfulValidations.length}/${items.length}`,
       );
-      console.log(`   - Failed: ${failedUpdates.length}/${items.length}`);
+      console.log(`   - Failed: ${failedValidations.length}/${items.length}`);
 
-      if (failedUpdates.length > 0) {
-        console.error(`❌ Failed stock updates:`, failedUpdates);
-        // Log but don't fail the transaction - the transaction was created successfully
+      if (failedValidations.length > 0) {
+        console.error(`❌ Failed stock validations:`, failedValidations);
+        // Throw an error if any stock validation failed to prevent the transaction
+        throw new Error(
+          `Stock validation failed for one or more items. Please check logs.`,
+        );
       }
 
       console.log(
@@ -2735,17 +2646,17 @@ export class DatabaseStorage implements IStorage {
           .where(eq(products.id, item.productId))
           .limit(1);
 
-        if (product && product.trackInventory) {
-          const newStock = Math.max(0, product.stock - item.quantity);
-          await database
-            .update(products)
-            .set({ stock: newStock })
-            .where(eq(products.id, item.productId));
+        // if (product && product.trackInventory) {
+        //   const newStock = Math.max(0, product.stock - item.quantity);
+        //   await database
+        //     .update(products)
+        //     .set({ stock: newStock })
+        //     .where(eq(products.id, item.productId));
 
-          console.log(
-            `Storage: Updated stock for product ${item.productId}: ${product.stock} -> ${newStock}`,
-          );
-        }
+        //   console.log(
+        //     `Storage: Updated stock for product ${item.productId}: ${product.stock} -> ${newStock}`,
+        //   );
+        // }
       }
     }
 
@@ -3621,6 +3532,7 @@ export class DatabaseStorage implements IStorage {
           defaultZone: "A", // Default zone
           floorPrefix: "층", // Floor prefix
           zonePrefix: "구역", // Zone prefix
+          isCreditCard: false,
         };
         const [newSettings] = await database
           .insert(storeSettings)
@@ -3632,6 +3544,7 @@ export class DatabaseStorage implements IStorage {
       // Ensure default floor and zone are present, even if not in DB
       return {
         ...settings,
+        isCreditCard: settings.isCreditCard || false,
         defaultFloor: settings.defaultFloor || "1",
         defaultZone: settings.defaultZone || "A",
         floorPrefix: settings.floorPrefix || "층",
@@ -4138,14 +4051,14 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(products)
       .where(eq(products.isActive, true))
-      .orderBy(products.name);
+      .orderBy(products.sort);
 
     // Ensure afterTaxPrice and beforeTaxPrice are properly returned
     return result.map((product) => ({
       ...product,
       afterTaxPrice: product.afterTaxPrice || null,
       beforeTaxPrice: product.beforeTaxPrice || null,
-      floor: product.floor || "1층", // Default floor
+      floor: product.floor || "1", // Default floor
     }));
   }
 
@@ -5650,6 +5563,7 @@ export class DatabaseStorage implements IStorage {
           supplierCode: suppliers.code,
           supplierPhone: suppliers.phone,
           supplierEmail: suppliers.email,
+          purchaseType: purchaseReceipts.purchaseType,
           // Employee information
           employeeName: employees.name,
           employeeCode: employees.employeeId,

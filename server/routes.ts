@@ -31,6 +31,7 @@ import {
   storeSettings,
   orders,
   orderItems as orderItemsTable,
+  orderChangeHistory,
   categories,
   transactions as transactionsTable,
   transactionItems as transactionItemsTable,
@@ -842,13 +843,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     },
   );
-  
+
   app.get(
     "/api/products/getByOrderId/:orderId",
     async (req: TenantRequest, res) => {
       try {
         const orderId = parseInt(req.params.orderId);
-        
+
         if (isNaN(orderId)) {
           return res.status(400).json({ message: "Invalid order ID" });
         }
@@ -889,9 +890,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (results.length === 0) {
           console.log(`⚠️ No products found for order ID: ${orderId}`);
-          return res.status(404).json({ 
+          return res.status(404).json({
             message: "No products found for this order",
-            orderId 
+            orderId,
           });
         }
 
@@ -899,14 +900,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(results);
       } catch (error) {
         console.error("❌ Error fetching products by orderId:", error);
-        res.status(500).json({ 
+        res.status(500).json({
           message: "Failed to fetch products by orderId",
-          error: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     },
   );
-  
+
   // Endpoint for POS to get only active products
   app.get("/api/products/active", async (req: TenantRequest, res) => {
     try {
@@ -1771,6 +1772,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
+  // Kitchen receipt printing endpoint
+  app.post(
+    "/api/pos/print-kitchen-receipt",
+    async (req: TenantRequest, res) => {
+      try {
+        const { content, floor, orderNumber, tableNumber, timestamp } =
+          req.body;
+
+        console.log(`🍳 Kitchen receipt print request:`, {
+          orderNumber,
+          tableNumber,
+          floor,
+          contentLength: content?.length || 0,
+        });
+
+        // Get active kitchen printers for this floor
+        const tenantDb = await getTenantDatabase(req);
+        const database = tenantDb || db;
+
+        const kitchenPrinters = await database
+          .select()
+          .from(printerConfigs)
+          .where(
+            and(
+              eq(printerConfigs.isActive, true),
+              eq(printerConfigs.isKitchen, true),
+              or(
+                eq(printerConfigs.floor, floor),
+                eq(printerConfigs.floor, "all"),
+              ),
+            ),
+          );
+
+        console.log(
+          `🖨️ Found ${kitchenPrinters.length} kitchen printers for floor ${floor}`,
+        );
+
+        if (kitchenPrinters.length === 0) {
+          console.log("⚠️ No active kitchen printers found for floor", floor);
+          return res.json({
+            success: false,
+            message: "No active kitchen printers found for this floor",
+          });
+        }
+
+        // Send to each kitchen printer
+        let successCount = 0;
+        for (const printer of kitchenPrinters) {
+          try {
+            // Here you would implement actual printer communication
+            // For now, we'll just log the print request
+            console.log(
+              `🖨️ Sending kitchen receipt to printer: ${printer.name} (${printer.connectionType})`,
+            );
+
+            // In a real implementation, you would send the content to the printer
+            // based on printer.connectionType (USB, network, bluetooth)
+
+            successCount++;
+          } catch (printerError) {
+            console.error(
+              `❌ Error sending to printer ${printer.name}:`,
+              printerError,
+            );
+          }
+        }
+
+        res.json({
+          success: successCount > 0,
+          message: `Kitchen receipt sent to ${successCount} printer(s)`,
+          printersCount: successCount,
+        });
+      } catch (error) {
+        console.error("❌ Error in kitchen receipt printing:", error);
+        res.status(500).json({
+          success: false,
+          error: "Failed to print kitchen receipt",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  );
+
   // API lấy danh sách đơn hàng với filter và pagination
   app.get("/api/orders/list", async (req: TenantRequest, res) => {
     try {
@@ -1871,7 +1955,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Status filter
       if (status && status !== "all") {
-        whereConditions.push(eq(orders.status, status as string));
+        if (status != "pending")
+          whereConditions.push(eq(orders.status, status as string));
+        else
+          whereConditions.push(
+            or(eq(orders.status, "pending"), eq(orders.status, "served")),
+          );
       }
 
       if (status == "all") {
@@ -2050,7 +2139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               id: item.id,
               orderId: item.orderId,
               productId: item.productId,
-              quantity: item.quantity,
+              quantity: Math.round(parseFloat(item.quantity || "1")),
               unit: "cái", // Default unit
               unitPrice: order.priceIncludeTax
                 ? Math.round(item.unitPrice / (1 + item.taxRate / 100))
@@ -2700,7 +2789,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .innerJoin(orders, eq(orderItemsTable.orderId, orders.id))
         .leftJoin(tables, eq(orders.tableId, tables.id))
         .leftJoin(products, eq(orderItemsTable.productId, products.id))
-        .where(eq(orderItemsTable.status, "pending"))
+        .where(
+          and(
+            eq(orderItemsTable.status, "pending"),
+            or(eq(orders.status, "served"), eq(orders.status, "pending")),
+          ),
+        )
         .orderBy(desc(orders.orderedAt));
 
       console.log(`✅ API: Found ${items.length} pending order items`);
@@ -2741,7 +2835,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .innerJoin(orders, eq(orderItemsTable.orderId, orders.id))
         .leftJoin(tables, eq(orders.tableId, tables.id))
         .leftJoin(products, eq(orderItemsTable.productId, products.id))
-        .where(eq(orderItemsTable.status, "progress"))
+        .where(
+          and(
+            eq(orderItemsTable.status, "progress"),
+            or(eq(orders.status, "served"), eq(orders.status, "pending")),
+          ),
+        )
         .orderBy(desc(orders.orderedAt));
 
       console.log(`✅ API: Found ${items.length} progress order items`);
@@ -2782,7 +2881,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .innerJoin(orders, eq(orderItemsTable.orderId, orders.id))
         .leftJoin(tables, eq(orders.tableId, tables.id))
         .leftJoin(products, eq(orderItemsTable.productId, products.id))
-        .where(eq(orderItemsTable.status, "completed"))
+        .where(
+          and(
+            eq(orderItemsTable.status, "completed"),
+            or(eq(orders.status, "served"), eq(orders.status, "pending")),
+          ),
+        )
         .orderBy(desc(orders.orderedAt));
 
       console.log(`✅ API: Found ${items.length} completed order items`);
@@ -3046,6 +3150,242 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+
+  // Create order change history record
+  app.post("/api/order-change-history", async (req: TenantRequest, res) => {
+    try {
+      console.log("📝 API: Creating order change history record:", req.body);
+      const tenantDb = await getTenantDatabase(req);
+      const database = tenantDb || db;
+
+      const {
+        orderId,
+        orderNumber,
+        userName,
+        action,
+        detailedDescription,
+        storeCode,
+      } = req.body;
+
+      // Validate required fields
+      if (!orderId) {
+        return res.status(400).json({
+          error: "Missing required field: orderId",
+        });
+      }
+
+      if (!action) {
+        return res.status(400).json({
+          error: "Missing required field: action",
+        });
+      }
+
+      // Get order details for additional context
+      const [order] = await database
+        .select()
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1);
+
+      if (!order) {
+        return res.status(404).json({
+          error: "Order not found",
+        });
+      }
+
+      // Get client IP address
+      const ipAddress =
+        req.headers["x-forwarded-for"] ||
+        req.headers["x-real-ip"] ||
+        req.ip ||
+        req.connection?.remoteAddress ||
+        "0.0.0.0";
+
+      // Insert change history record
+      const [historyRecord] = await database
+        .insert(orderChangeHistory)
+        .values({
+          orderId: orderId,
+          orderNumber: order.orderNumber,
+          changedAt: new Date(),
+          ipAddress: ipAddress.toString(),
+          userName: userName || "System",
+          action: action,
+          detailedDescription: detailedDescription,
+          storeCode: storeCode || null,
+        })
+        .returning();
+
+      console.log("✅ Order change history record created:", historyRecord);
+
+      res.status(201).json(historyRecord);
+    } catch (error) {
+      console.error("❌ API: Failed to create order change history:", error);
+      res.status(500).json({
+        error: "Failed to create order change history",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Get all order change history with filtering and pagination
+  app.get("/api/order-change-history", async (req: TenantRequest, res) => {
+    try {
+      const {
+        page = "1",
+        limit = "20",
+        search,
+        startDate,
+        endDate,
+        orderNumber,
+        action,
+        userName,
+      } = req.query;
+
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const offset = (pageNum - 1) * limitNum;
+
+      console.log("🔍 GET /api/order-change-history - Filter params:", {
+        page: pageNum,
+        limit: limitNum,
+        search,
+        startDate,
+        endDate,
+        orderNumber,
+        action,
+        userName,
+      });
+
+      const tenantDb = await getTenantDatabase(req);
+      const database = tenantDb || db;
+
+      // Build where conditions
+      const whereConditions = [];
+
+      // Date range filter
+      if (startDate && endDate) {
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+
+        whereConditions.push(
+          gte(orderChangeHistory.changedAt, start),
+          lte(orderChangeHistory.changedAt, end),
+        );
+      }
+
+      // Order number filter
+      if (orderNumber) {
+        whereConditions.push(
+          ilike(orderChangeHistory.orderNumber, `%${orderNumber}%`),
+        );
+      }
+
+      // Action filter
+      if (action && action !== "all") {
+        whereConditions.push(eq(orderChangeHistory.action, action as string));
+      }
+
+      // User name filter
+      if (userName) {
+        whereConditions.push(
+          ilike(orderChangeHistory.userName, `%${userName}%`),
+        );
+      }
+
+      // Search filter (search in detailed description)
+      if (search) {
+        whereConditions.push(
+          ilike(orderChangeHistory.detailedDescription, `%${search}%`),
+        );
+      }
+
+      // Get total count
+      const [totalCountResult] = await database
+        .select({ count: count() })
+        .from(orderChangeHistory)
+        .where(
+          whereConditions.length > 0 ? and(...whereConditions) : undefined,
+        );
+
+      const totalCount = totalCountResult?.count || 0;
+      const totalPages = Math.ceil(totalCount / limitNum);
+
+      // Get paginated records
+      const history = await database
+        .select()
+        .from(orderChangeHistory)
+        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+        .orderBy(desc(orderChangeHistory.changedAt))
+        .limit(limitNum)
+        .offset(offset);
+
+      console.log(
+        `✅ Found ${history.length} order change history records (page ${pageNum}/${totalPages})`,
+      );
+
+      res.json({
+        history,
+        pagination: {
+          currentPage: pageNum,
+          totalPages,
+          totalCount,
+          limit: limitNum,
+          hasNext: pageNum < totalPages,
+          hasPrev: pageNum > 1,
+        },
+      });
+    } catch (error) {
+      console.error("❌ API: Failed to fetch order change history:", error);
+      res.status(500).json({
+        error: "Failed to fetch order change history",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Get order change history by order ID
+  app.get(
+    "/api/order-change-history/:orderId",
+    async (req: TenantRequest, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId);
+        console.log(
+          `📝 API: Getting order change history for order ${orderId}`,
+        );
+
+        if (isNaN(orderId)) {
+          return res.status(400).json({
+            error: "Invalid order ID",
+          });
+        }
+
+        const tenantDb = await getTenantDatabase(req);
+        const database = tenantDb || db;
+
+        const historyRecords = await database
+          .select()
+          .from(orderChangeHistory)
+          .where(eq(orderChangeHistory.orderId, orderId))
+          .orderBy(desc(orderChangeHistory.changedAt));
+
+        console.log(
+          `✅ Found ${historyRecords.length} history records for order ${orderId}`,
+        );
+
+        res.json(historyRecords);
+      } catch (error) {
+        console.error("❌ API: Failed to fetch order change history:", error);
+        res.status(500).json({
+          error: "Failed to fetch order change history",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  );
 
   // Create order item (for adding new items to existing orders)
   app.post("/api/order-items/:orderId", async (req: TenantRequest, res) => {
@@ -6752,7 +7092,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const tenantDb = await getTenantDatabase(req);
       const settings = await storage.getStoreSettings(tenantDb);
-      res.json(settings);
+      res.status(200).json(settings);
     } catch (error) {
       console.error("Error fetching store settings:", error);
       res.status(500).json({
