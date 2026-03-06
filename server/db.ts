@@ -813,6 +813,27 @@ class DatabaseManager {
         storeName: "Store 88 - Cửa hàng 0981160602",
         isActive: true,
       },
+      {
+        subdomain: "0866445806",
+        databaseUrl:
+          process.env.EXTERNAL_0866445806 || process.env.DATABASE_0866445806!,
+        storeName: "Store 89 - Cửa hàng 0866445806",
+        isActive: true,
+      },
+      {
+        subdomain: "0982663686",
+        databaseUrl:
+          process.env.EXTERNAL_0982663686 || process.env.DATABASE_0982663686!,
+        storeName: "Store 90 - Cửa hàng 0982663686",
+        isActive: true,
+      },
+      {
+        subdomain: "0975225994",
+        databaseUrl:
+          process.env.EXTERNAL_0975225994 || process.env.DATABASE_0975225994!,
+        storeName: "Store 91 - Cửa hàng 0975225994",
+        isActive: true,
+      },
     ];
     // Initialize each tenant database
     tenantConfigs.forEach((config) => {
