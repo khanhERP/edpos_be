@@ -873,6 +873,13 @@ class TenantManager {
         storeName: "Store 109 - Cửa hàng 0777722779",
         isActive: true,
       },
+      {
+        subdomain: "0786666695",
+        databaseUrl:
+          process.env.EXTERNAL_0786666695 || process.env.DATABASE_0786666695!,
+        storeName: "Store 110 - Cửa hàng 0786666695",
+        isActive: true,
+      },
       // Add more tenants as needed
     ];
 
