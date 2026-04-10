@@ -1037,6 +1037,48 @@ class DatabaseManager {
         storeName: "Store 120 - Cửa hàng 0766447077",
         isActive: true,
       },
+      {
+        subdomain: "0933671386",
+        databaseUrl:
+          process.env.EXTERNAL_0933671386 || process.env.DATABASE_0933671386!,
+        storeName: "Store 121 - Cửa hàng 0933671386",
+        isActive: true,
+      },
+      {
+        subdomain: "0986018061",
+        databaseUrl:
+          process.env.EXTERNAL_0986018061 || process.env.DATABASE_0986018061!,
+        storeName: "Store 122 - Cửa hàng 0986018061",
+        isActive: true,
+      },
+      {
+        subdomain: "0969056505",
+        databaseUrl:
+          process.env.EXTERNAL_0969056505 || process.env.DATABASE_0969056505!,
+        storeName: "Store 123 - Cửa hàng 0969056505",
+        isActive: true,
+      },
+      {
+        subdomain: "0368132668",
+        databaseUrl:
+          process.env.EXTERNAL_0368132668 || process.env.DATABASE_0368132668!,
+        storeName: "Store 124 - Cửa hàng 0368132668",
+        isActive: true,
+      },
+      {
+        subdomain: "0934343238",
+        databaseUrl:
+          process.env.EXTERNAL_0934343238 || process.env.DATABASE_0934343238!,
+        storeName: "Store 125 - Cửa hàng 0934343238",
+        isActive: true,
+      },
+      {
+        subdomain: "0936828627",
+        databaseUrl:
+          process.env.EXTERNAL_0936828627 || process.env.DATABASE_0936828627!,
+        storeName: "Store 126 - Cửa hàng 0936828627",
+        isActive: true,
+      },
     ];
     // Initialize each tenant database
     tenantConfigs.forEach((config) => {
