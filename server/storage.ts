@@ -32,7 +32,7 @@ import {
   type InsertPurchaseReceipt,
   type InsertPurchaseReceiptItem,
   type InsertPurchaseReceiptDocument,
-} from "@shared/schema";
+} from "../shared/schema";
 import { db, dbManager, getTenantDatabase as getDbForTenant } from "./db";
 import {
   eq,
