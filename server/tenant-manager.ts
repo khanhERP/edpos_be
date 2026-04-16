@@ -999,6 +999,41 @@ class TenantManager {
         storeName: "Store 127 - Cửa hàng 0932654571",
         isActive: true,
       },
+      {
+        subdomain: "0963382585",
+        databaseUrl:
+          process.env.EXTERNAL_0963382585 || process.env.DATABASE_0963382585!,
+        storeName: "Store 128 - Cửa hàng 0963382585",
+        isActive: true,
+      },
+      {
+        subdomain: "0375554446",
+        databaseUrl:
+          process.env.EXTERNAL_0375554446 || process.env.DATABASE_0375554446!,
+        storeName: "Store 129 - Cửa hàng 0375554446",
+        isActive: true,
+      },
+      {
+        subdomain: "0886823333",
+        databaseUrl:
+          process.env.EXTERNAL_0886823333 || process.env.DATABASE_0886823333!,
+        storeName: "Store 130 - Cửa hàng 0886823333",
+        isActive: true,
+      },
+      {
+        subdomain: "0979457524",
+        databaseUrl:
+          process.env.EXTERNAL_0979457524 || process.env.DATABASE_0979457524!,
+        storeName: "Store 131 - Cửa hàng 0979457524",
+        isActive: true,
+      },
+      {
+        subdomain: "0961595111",
+        databaseUrl:
+          process.env.EXTERNAL_0961595111 || process.env.DATABASE_0961595111!,
+        storeName: "Store 132 - Cửa hàng 0961595111",
+        isActive: true,
+      },
       // Add more tenants as needed
     ];
 
