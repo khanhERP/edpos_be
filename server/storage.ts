@@ -32,7 +32,7 @@ import {
   type InsertPurchaseReceipt,
   type InsertPurchaseReceiptItem,
   type InsertPurchaseReceiptDocument,
-} from "../shared/schema";
+} from "@shared/schema";
 import { db, dbManager, getTenantDatabase as getDbForTenant } from "./db";
 import {
   eq,
@@ -704,6 +704,8 @@ interface StoreSettings {
   logoUrl?: string | null;
   currency?: string;
   taxRate?: string;
+  domain?: string;
+  email?: string;
   goldThreshold?: string;
   vipThreshold?: string;
   isCreditCard?: boolean;
@@ -722,6 +724,8 @@ interface InsertStoreSettings {
   businessType?: string;
   openTime?: string;
   closeTime?: string;
+  domain?: string;
+  email?: string;
   logoUrl?: string | null;
   currency?: string;
   taxRate?: string;
@@ -3160,7 +3164,7 @@ export class DatabaseStorage implements IStorage {
 
         try {
           // Import tables from schema
-          const { tables } = await import("../shared/schema");
+          const { tables } = await import("@shared/schema");
           console.log(`✅ Tables schema imported successfully`);
 
           // Check for other ACTIVE orders on the same table (excluding current order and paid/cancelled orders)
@@ -3248,11 +3252,11 @@ export class DatabaseStorage implements IStorage {
                 updatedTableExists: !!updatedTable,
                 updatedTableData: updatedTable
                   ? {
-                      id: updatedTable.id,
-                      tableNumber: updatedTable.tableNumber,
-                      status: updatedTable.status,
-                      updatedAt: updatedTable.updatedAt,
-                    }
+                    id: updatedTable.id,
+                    tableNumber: updatedTable.tableNumber,
+                    status: updatedTable.status,
+                    updatedAt: updatedTable.updatedAt,
+                  }
                   : null,
               });
 
@@ -3292,10 +3296,10 @@ export class DatabaseStorage implements IStorage {
                   tableExists: !!checkTable,
                   tableData: checkTable
                     ? {
-                        id: checkTable.id,
-                        tableNumber: checkTable.tableNumber,
-                        status: checkTable.status,
-                      }
+                      id: checkTable.id,
+                      tableNumber: checkTable.tableNumber,
+                      status: checkTable.status,
+                    }
                     : null,
                 });
               }
@@ -3656,42 +3660,13 @@ export class DatabaseStorage implements IStorage {
   async getCustomers(tenantDb?: any): Promise<Customer[]> {
     const database = tenantDb || this.getSafeDatabase("getCustomers");
 
-    // Get membership thresholds
-    const thresholds = await this.getMembershipThresholds(tenantDb);
-
     // Get all customers
     const allCustomers = await database
       .select()
       .from(customers)
       .orderBy(customers.name);
 
-    // Update membership levels based on spending
-    const updatedCustomers = [];
-    for (const customer of allCustomers) {
-      const totalSpent = parseFloat(customer.totalSpent || "0");
-      const calculatedLevel = this.calculateMembershipLevel(
-        totalSpent,
-        thresholds.GOLD,
-        thresholds.VIP,
-      );
-
-      // Update if membership level has changed
-      if (customer.membershipLevel !== calculatedLevel) {
-        const [updatedCustomer] = await database
-          .update(customers)
-          .set({
-            membershipLevel: calculatedLevel,
-            updatedAt: new Date(),
-          })
-          .where(eq(customers.id, customer.id))
-          .returning();
-        updatedCustomers.push(updatedCustomer);
-      } else {
-        updatedCustomers.push(customer);
-      }
-    }
-
-    return updatedCustomers;
+    return allCustomers;
   }
 
   async searchCustomers(query: string, tenantDb?: any): Promise<Customer[]> {
@@ -4300,7 +4275,7 @@ export class DatabaseStorage implements IStorage {
   async getEInvoiceConnections(tenantDb?: any): Promise<any[]> {
     const database = tenantDb || this.getSafeDatabase("getEInvoiceConnections");
     try {
-      const { eInvoiceConnections } = await import("../shared/schema");
+      const { eInvoiceConnections } = await import("@shared/schema");
       return await database
         .select()
         .from(eInvoiceConnections)
@@ -4314,7 +4289,7 @@ export class DatabaseStorage implements IStorage {
   async getEInvoiceConnection(id: number, tenantDb?: any): Promise<any> {
     const database = tenantDb || this.getSafeDatabase("getEInvoiceConnection");
     try {
-      const { eInvoiceConnections } = await import("../shared/schema");
+      const { eInvoiceConnections } = await import("@shared/schema");
       const [result] = await database
         .select()
         .from(eInvoiceConnections)
@@ -4330,7 +4305,7 @@ export class DatabaseStorage implements IStorage {
     const database =
       tenantDb || this.getSafeDatabase("createEInvoiceConnection");
     try {
-      const { eInvoiceConnections } = await import("../shared/schema");
+      const { eInvoiceConnections } = await import("@shared/schema");
 
       // Generate next symbol number
       const existingConnections = await this.getEInvoiceConnections(tenantDb);
@@ -4360,7 +4335,7 @@ export class DatabaseStorage implements IStorage {
     const database =
       tenantDb || this.getSafeDatabase("updateEInvoiceConnection");
     try {
-      const { eInvoiceConnections } = await import("../shared/schema");
+      const { eInvoiceConnections } = await import("@shared/schema");
       const [result] = await database
         .update(eInvoiceConnections)
         .set({ ...data, updatedAt: new Date() })
@@ -4377,7 +4352,7 @@ export class DatabaseStorage implements IStorage {
     const database =
       tenantDb || this.getSafeDatabase("deleteEInvoiceConnection");
     try {
-      const { eInvoiceConnections } = await import("../shared/schema");
+      const { eInvoiceConnections } = await import("@shared/schema");
       const result = await database
         .delete(eInvoiceConnections)
         .where(eq(eInvoiceConnections.id, id))
